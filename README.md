@@ -39,3 +39,21 @@ O script executa ações em registros oficiais. Confira o relatório e verifique
 ## Histórico
 
 Versão original preservada em [SEGES/arquivo/validacao-automatica-v6.1-original.js](SEGES/arquivo/validacao-automatica-v6.1-original.js), apenas como arquivo histórico. Não instale as duas versões simultaneamente.
+
+## Plano Semanal — preenchimento automático v1.4.0
+
+**Script para instalar:** [SEGES/plano-semanal.user.js](SEGES/plano-semanal.user.js)
+
+- Conserva a distribuição de habilidades de Ciências/Biologia e os textos predefinidos para disciplinas específicas;
+- Conserva a retomada da automação e o relatório exportável em CSV/JSON;
+- Exibe a turma pelo nome, se o próprio SEGES disponibilizar esse dado; caso contrário, exibe o identificador (ID);
+- Exibe barra de progresso em duas fases: mapeamento das semanas (0–50%) e preenchimento (50–100%);
+- Permite mover o painel pelo cabeçalho, lembrando a posição entre páginas;
+- Permite mostrar/ocultar os últimos eventos do log e exportar o histórico completo como TXT;
+- Restringe a execução ao domínio oficial `seges.sedu.es.gov.br`.
+
+**Instalação:** no Tampermonkey, crie um script novo, copie o conteúdo do arquivo [plano-semanal.user.js](SEGES/plano-semanal.user.js), salve com **Ctrl+S** e desative a versão antiga desse script. O script aparece nas páginas de planos semanais do SEGES.
+
+**Atenção:** o indicador conta semanas processadas em cada fase; não mede o sucesso da gravação no servidor. O relatório reúne instruções planejadas, devendo ser conferido no SEGES. A sintaxe JavaScript foi validada e as contas de progresso foram testadas, mas não houve teste na sessão autenticada do sistema.
+
+**Cópia da versão recebida:** [SEGES/arquivo/plano-semanal-v1.3.2-original.user.js](SEGES/arquivo/plano-semanal-v1.3.2-original.user.js).
