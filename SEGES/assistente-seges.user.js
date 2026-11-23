@@ -3386,7 +3386,118 @@
         openAbilityReviewModal(state);
       }
     
+      async function openAbilityReviewModal(state) {
+  if(state?.version!==4||state.status!=='review')return;
+  const existing=qs('#'+CONFIG.modalId);
+  if(existing?.dataset.review==='true')return;
+  existing?.remove();
+  const modal=document.createElement('div');
+  modal.id=CONFIG.modalId;
+  modal.dataset.review='true';
+  const weeks=state.applyWeeks||[];
+  const sections=weeks.map(week=>{
+    const items=state.executionPlan[String(week.week)]?.instructions||[];
+    return `<section style="border:1px solid #dce4ec;border-radius:9px;margin:10px 0;padding:9px">
+      <strong>Semana ${week.week} · ${escapeHtml(week.period||'')}</strong>
+      ${items.map(item=>{
+        if(item.kind!=='science')return `<div style="font-size:12px;padding:6px">Aula ${item.rowIndex+1} · ${escapeHtml(item.discipline)}: texto padrão se vazio</div>`;
+        const current=item.alreadyComplete?'__keep':item.abilityValue;
+        return `<div style="border-bottom:1px solid #eee;padding:8px 0">
+          <label style="font-size:12px;display:block;margin-bottom:5px">
+            <strong>${escapeHtml(item.discipline)} · Aula ${item.rowIndex+1}</strong>
+            ${escapeHtml(item.date||'')} ${item.existingAbilityValue?'· Já preenchida':'· Em branco'}
+          </label>
+          <select data-ability-week="${week.week}" data-ability-row="${item.rowIndex}"
+            style="width:100%;padding:7px;border:1px solid #bfcddd;border-radius:6px">
+            <option value="" ${!current?'selected':''}>Não preencher esta aula</option>
+            ${item.existingAbilityValue?`<option value="__keep" ${current==='__keep'?'selected':''}>Manter o registro existente como está</option>`:''}
+            ${(item.availableAbilities||[]).map(a=>`<option value="${escapeHtml(a.value)}" ${String(current)===String(a.value)?'selected':''}>${escapeHtml(a.label)}</option>`).join('')}
+          </select>
+          <div style="font-size:11px;color:#637a8c;margin-top:5px">${escapeHtml(item.stageName||'Etapa não reconhecida')}
+            ${item.automaticAllowed?'· Sugestão automática':'· Escolha manual obrigatória'}
+          </div>
+        </div>`;
+      }).join('')}
+    </section>`;
+  }).join('');
+  modal.innerHTML=`<div class="vm-modal-box" style="max-width:950px">
+    <h3>Conferir habilidades antes do preenchimento</h3>
+    <p style="font-size:13px">Turma: <b>${escapeHtml(state.classroomName||state.classroomId)}</b>.
+      Escolha a habilidade de cada aula de cada semana. Nenhum plano foi enviado nesta etapa.</p>
+    <p style="font-size:12px;color:#935c21">Se uma habilidade de uma aula já preenchida for alterada,
+      será solicitada uma confirmação específica antes de substituir o registro.</p>
+    <div style="max-height:55vh;overflow:auto">${sections}</div>
+    <div class="vm-modal-actions" style="flex-wrap:wrap">
+      <button type="button" class="vm-primary" data-review="approve">Aprovar e preencher</button>
+      <button type="button" class="vm-secondary" data-review="later">Revisar depois</button>
+      <button type="button" class="vm-danger" data-review="cancel">Cancelar lote</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.onclick=async(event)=>{
+    const action=event.target.closest('[data-review]')?.dataset.review;
+    if(action==='later'){modal.remove();return;}
+    if(action==='cancel'){
+      if(confirm('Cancelar a execução antes de preencher?')){
+        pausePlan(state,'Cancelado pelo usuário antes do preenchimento.');
+        modal.remove();
+      }
+      return;
+    }
+    if(action!=='approve')return;
+    const changes=[];
+    const skipped=[];
+    const reportRows=[];
+    const toApply=[];
+    for(const week of weeks){
+      const plan=state.executionPlan[String(week.week)];
+      const updated=[];
+      for(const item of plan.instructions){
+        if(item.kind!=='science'){updated.push(item);continue;}
+        const select=Array.from(modal.querySelectorAll('[data-ability-week]')).find(el=>
+          Number(el.dataset.abilityWeek)===Number(week.week)&&Number(el.dataset.abilityRow)===Number(item.rowIndex)
+        );
+        if(!select){alert('O seletor da aula não foi encontrado.');return;}
+        const value=String(select.value||'');
+        if(!value||value==='__keep'){skipped.push({week:week.week,row:item.rowIndex});continue;}
+        const ability=(item.availableAbilities||[]).find(a=>String(a.value)===value);
+        if(!ability){alert('Habilidade não permitida nessa aula: semana '+week.week);return;}
+        item.replaceExisting=!!(item.existingAbilityValue&&String(item.existingAbilityValue)!==value);
+        if(item.replaceExisting)changes.push('Semana '+week.week+', aula '+(item.rowIndex+1));
+        item.abilityValue=value;item.abilityLabel=ability.label;
+        item.knowledge=ability.knowledges?.[0]||'';
+        item.methodologies=ability.methodologies?.length?[ability.methodologies[0]]:[];
+        item.evaluation=false;
+        updated.push(item);
+        reportRows.push({week:week.week,rowIndex:item.rowIndex,date:item.date,
+          discipline:item.discipline,kind:item.replaceExisting?'Substituição':'Ciências/Biologia',
+          ability:ability.label,knowledge:item.knowledge,
+          methodologies:item.methodologies.join(' | '),evaluation:'Não',manualText:''});
+      }
+      plan.instructions=updated;
+      if(updated.length)toApply.push(week);
+    }
+    if(changes.length&&!confirm('Substituir habilidades já registradas em '+changes.length+
+      ' aula(s)?\n'+changes.slice(0,10).join('\n')+'\n\nEsta alteração requer sua autorização.'))return;
+    state.applyWeeks=toApply;
+    state.reportRows=(state.reportRows||[]).filter(r=>r.kind==='Texto predefinido').concat(reportRows);
+    state.computed={...state.computed,weeksToFill:toApply.length,
+      approvedRows:toApply.reduce((n,w)=>n+state.executionPlan[String(w.week)].instructions.length,0),
+      skippedRows:skipped.length,replacements:changes.length};
+    appendLog(state,'Seleção conferida e aprovada.',state.computed);
+    state.approvedAt=new Date().toISOString();
+    state.status='applying';state.applyIndex=0;state.waitingReturn=false;
+    saveState(state);modal.remove();renderPanel();
+    if(!toApply.length){await finishBatchClass(state);return;}
+    location.href=toApply[0].url;
+  };
+}
+
       async function handleApplyPage(state) {
+        if(!state.approvedAt){
+          pausePlan(state,'Preenchimento bloqueado: as habilidades ainda não foram autorizadas.');
+          return;
+        }
         const currentWeek = getCurrentWeekFromForm();
         const currentClassroom=getCurrentClassroomId();
         if(currentClassroom && String(currentClassroom)!==String(state.classroomId))
@@ -3408,6 +3519,8 @@
           return;
         }
     
+        const formError=isSegesFormError();
+        if(formError){pausePlan(state,'Mensagem de erro no formulário: '+formError);return;}
         const rows = qsa('#weekly_plan tr.by-curriculum-discipline');
         appendLog(state, 'Aplicando semana.', { week: currentWeek, instructions: plan.instructions.length });
         saveState(state);
@@ -3415,8 +3528,15 @@
         for (const instruction of plan.instructions) {
           const rowElement = rows[instruction.rowIndex];
           if (!rowElement) {
-            appendLog(state, 'Linha não encontrada para instrução.', instruction);
-            continue;
+            pausePlan(state,'Aula não encontrada: semana '+currentWeek+', linha '+(instruction.rowIndex+1));
+            return;
+          }
+          const actual=String(rowElement.querySelectorAll('td')[1]?.textContent||'').trim();
+          if(normalizeText(actual)!==normalizeText(instruction.discipline)){
+            pausePlan(state,'A disciplina da aula mudou. É necessário revisar as escolhas.',{
+              expected:instruction.discipline,actual
+            });
+            return;
           }
     
           try {
@@ -3439,7 +3559,8 @@
         saveState(state);
     
         await sleep(CONFIG.saveDelayMs);
-    
+        const beforeSaveError=isSegesFormError();
+        if(beforeSaveError){pausePlan(state,'Validação do SEGES: '+beforeSaveError);return;}
         const saveButton = qs('input[type="submit"][value="Salvar"], input[name="commit"][value="Salvar"]');
         if (!saveButton) {
           throw new Error('Botão Salvar não encontrado.');
