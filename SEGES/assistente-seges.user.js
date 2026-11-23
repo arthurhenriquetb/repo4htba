@@ -3624,7 +3624,8 @@
           return `Aplicando preenchimento ${state.applyIndex}/${(state.applyWeeks || state.weeks).length}`;
         }
         if (state.status === 'done') {
-          return `Concluído. Semanas com lacunas processadas: ${state.computed?.weeksToFill ?? state.weeks.length}`;
+          return state.batch ? 'Concluído: '+state.batch.jobs.length+' turma(s); '+(state.computed?.totalFilledWeeks||0)+' semana(s) com lacunas.' :
+            `Concluído. Semanas com lacunas processadas: ${state.computed?.weeksToFill ?? state.weeks.length}`;
         }
         return `Estado: ${state.status}`;
       }
@@ -3641,17 +3642,21 @@
         const stageWeeks = scanning ? state.weeks : (state.applyWeeks || state.weeks);
         const stageTotal = Math.max(1,stageWeeks.length);
         const index = Math.min(stageTotal, Math.max(0, scanning ? (state.scanIndex || 0) : (state.applyIndex || 0)));
-        const percent = Math.round((scanning ? 0 : 50) + 50 * index / stageTotal);
+        const classProgress=(scanning?0:0.5)+0.5*index/stageTotal;
+        const batchTotal=state.batch?.jobs?.length||1, batchIndex=state.batch?.index||0;
+        const percent=Math.round(100*(batchIndex+classProgress)/batchTotal);
         const current = stageWeeks[Math.min(index, stageWeeks.length - 1)];
         return {
           percent,
-          label: (scanning ? 'Mapeamento' : 'Preenchimento') + ': ' + index + '/' + stageTotal + ' semanas',
+          label: 'Turma '+(batchIndex+1)+'/'+batchTotal+' · '+
+            (scanning?'Mapeamento':'Preenchimento')+': '+index+'/'+stageTotal+' semanas',
           week: current ? ('Semana ' + current.week + (current.period ? ' · ' + current.period : '')) : '—'
         };
       }
     
       function getClassroomDisplay(state) {
         const id = state?.classroomId || getCurrentClassroomId();
+        if (state?.classroomName) return state.classroomName + (id ? ' (ID '+id+')' : '');
         if (!id) return 'Não identificada';
         const classrooms = Array.isArray(window.classrooms) ? window.classrooms : [];
         const found = classrooms.find((item) =>
@@ -4096,17 +4101,18 @@
         const canShowReport = !!state?.reportRows?.length;
     
         panel.innerHTML = `
-          <div class="vm-head">Plano semanal automático</div>
+          <div class="vm-head">SEGES • Assistente — Planos</div>
           <div class="vm-body">
             <div><strong>Turma:</strong> ${escapeHtml(getClassroomDisplay(state))}</div>
             <div style="margin-top:6px;"><strong>Status:</strong> ${escapeHtml(getSummaryText(state))}</div>
+            ${state?.status==='done' ? '<div style="margin-top:5px;font-size:12px;color:#536471">Última execução concluída. Inicie uma nova seleção quando desejar.</div>' : ''}
             <div style="margin-top:6px;"><strong>Atual:</strong> ${escapeHtml(progress.week)}</div>
             <div style="margin-top:9px;display:flex;justify-content:space-between;gap:8px;"><span>${escapeHtml(progress.label)}</span><strong>${progress.percent}%</strong></div>
             <div class="vm-progress-track" role="progressbar" aria-label="Progresso da automação" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent}">
               <div class="vm-progress-fill" style="width:${progress.percent}%"></div>
             </div>
             <div class="vm-actions">
-              ${canStart ? '<button class="vm-primary" data-vm-action="start">Selecionar semanas</button>' : ''}
+              ${canStart ? '<button class="vm-primary" data-vm-action="start">Preencher planos</button>' : ''}
               ${(isWeeksPage() || isClassroomsPage()) ? '<button class="vm-secondary" data-vm-action="delete-manager">Gerenciar exclusões</button>' : ''}
               ${canResume ? '<button class="vm-primary" data-vm-action="resume">Continuar de onde parou</button>' : ''}
               ${canShowReport ? '<button class="vm-secondary" data-vm-action="report">Ver relatório</button>' : ''}
