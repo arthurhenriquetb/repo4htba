@@ -387,219 +387,152 @@ function getExistingFieldsInRow(tr) {
   }
 
   function buildExecutionPlan(state) {
-    const orderedSummaries = state.weeks
-      .map((item) => state.summaries[String(item.week)])
-      .filter(Boolean);
-
-    const abilities = uniqueBy(state.abilities || [], (item) => `${item.value}::${item.label}`);
-    const scienceWeekEntries = orderedSummaries.filter((summary) => summary.rows.some((row) => row.kind === 'science'));
-
-    const weekAssignments = {};
-    const reportRows = [];
-
-    if (!abilities.length) {
-      appendLog(state, 'Nenhuma habilidade encontrada. O plano será gerado apenas para Práticas Experimentais e disciplinas textuais configuradas, se existirem.');
+    const allSummaries=state.weeks.map((item)=>state.summaries[String(item.week)]).filter(Boolean);
+    const selected=new Set((state.selectedWeeks||state.weeks.map((item)=>item.week)).map(Number));
+    const abilities=uniqueBy(state.abilities||[],(ability)=>String(ability.value));
+    const used=new Map(abilities.map((ability)=>[String(ability.value),0]));
+    const plans={};
+    const reports=[];
+    const preserved={manual:0,structured:0};
+    let lastAbility='';
+    let lastIndex=-1;
+    for(const summary of allSummaries){
+      const usedInWeek=new Set(summary.rows
+        .filter((row)=>row.kind==='science'&&row.existingAbilityValue)
+        .map((row)=>String(row.existingAbilityValue)));
+      for(const value of usedInWeek)used.set(value,(used.get(value)||0)+1);
     }
-
-    orderedSummaries.forEach((summary) => {
-      weekAssignments[String(summary.week)] = {
-        week: summary.week,
-        instructions: []
-      };
-    });
-
-    const addReportRow = (row) => reportRows.push(row);
-    const addInstruction = (week, instruction) => {
-      if (!weekAssignments[String(week)]) {
-        weekAssignments[String(week)] = { week, instructions: [] };
-      }
-      weekAssignments[String(week)].instructions.push(instruction);
-    };
-
-    orderedSummaries.forEach((summary) => {
-      const manualRows = summary.rows.filter((row) => row.kind === 'practice' || !!row.manualProfile);
-      manualRows.forEach((row) => {
-        const manualProfile = row.manualProfile || getManualDisciplineProfile(row.discipline);
-        const manualText = row.kind === 'practice'
-          ? CONFIG.practiceText
-          : (manualProfile?.manualText || '');
-        const reportKind = row.kind === 'practice'
-          ? 'Prática Experimental'
-          : (manualProfile?.reportKind || row.discipline);
-
-        addInstruction(summary.week, {
-          rowIndex: row.rowIndex,
-          kind: row.kind,
-          discipline: row.discipline,
-          date: row.date,
-          manualText
-        });
-
-        addReportRow({
-          week: summary.week,
-          date: row.date,
-          discipline: row.discipline,
-          kind: reportKind,
-          ability: '',
-          knowledge: '',
-          methodologies: '',
-          evaluation: 'Não',
-          manualText
-        });
-      });
-    });
-
-    const weekAbilityIndexByWeek = new Map();
-    const abilityBlocks = [];
-
-    if (abilities.length && scienceWeekEntries.length) {
-      const totalScienceWeeks = scienceWeekEntries.length;
-      const totalAbilities = abilities.length;
-
-      if (totalScienceWeeks <= totalAbilities) {
-        scienceWeekEntries.forEach((entry, index) => {
-          weekAbilityIndexByWeek.set(String(entry.week), index);
-        });
-      } else {
-        const baseWeeksPerAbility = Math.floor(totalScienceWeeks / totalAbilities);
-        const extraWeeks = totalScienceWeeks % totalAbilities;
-        let weekCursor = 0;
-
-        abilities.forEach((ability, abilityIndex) => {
-          const blockSize = baseWeeksPerAbility + (abilityIndex < extraWeeks ? 1 : 0);
-          for (let n = 0; n < blockSize && weekCursor < totalScienceWeeks; n += 1) {
-            weekAbilityIndexByWeek.set(String(scienceWeekEntries[weekCursor].week), abilityIndex);
-            weekCursor += 1;
-          }
-        });
-      }
-
-      let currentBlock = null;
-      scienceWeekEntries.forEach((entry) => {
-        const weekKey = String(entry.week);
-        const abilityIndex = weekAbilityIndexByWeek.get(weekKey);
-        if (abilityIndex == null) return;
-        if (!currentBlock || currentBlock.abilityIndex !== abilityIndex) {
-          currentBlock = {
-            abilityIndex,
-            ability: abilities[abilityIndex],
-            weeks: []
-          };
-          abilityBlocks.push(currentBlock);
+    const getAbility=(value)=>abilities.find((a)=>String(a.value)===String(value))||null;
+    function pickAbility(){
+      if(!abilities.length)return null;
+      const minimum=Math.min(...abilities.map((ability)=>used.get(String(ability.value))||0));
+      for(let offset=1;offset<=abilities.length;offset++){
+        const index=(lastIndex+offset)%abilities.length;
+        const ability=abilities[index];
+        if((used.get(String(ability.value))||0)===minimum && (abilities.length===1 || String(ability.value)!==lastAbility)){
+          lastIndex=index;
+          lastAbility=String(ability.value);
+          return ability;
         }
-        currentBlock.weeks.push(entry.week);
-      });
-
-      abilityBlocks.forEach((block) => {
-        const ability = block.ability;
-        const availableMethods = ability.methodologies || [];
-        const knowledges = ability.knowledges || [];
-
-        const expositive = findPreferredMethod(availableMethods, [
-          'Aula expositiva/dialogada',
-          'Aula dialogada',
-          'Aula expositiva'
-        ]);
-        const exercise = findPreferredMethod(availableMethods, [
-          'Resolução de exercícios',
-          'Resolução de Problemas',
-          'Resolução de problemas'
-        ]);
-        const mindMap = findPreferredMethod(availableMethods, ['Mapa Mental']);
-        const fallbackMethod = availableMethods[0] || null;
-
-        const lessonRefs = [];
-        block.weeks.forEach((week) => {
-          const summary = state.summaries[String(week)];
-          if (!summary) return;
-          summary.rows
-            .filter((row) => row.kind === 'science')
-            .forEach((row) => lessonRefs.push({ week, row, summary }));
-        });
-
-        const evaluationLessonIndex = lessonRefs.length ? lessonRefs.length - 1 : -1;
-        let nonEvaluationCounter = 0;
-
-        lessonRefs.forEach((lessonRef, lessonIndex) => {
-          const evaluation = lessonIndex === evaluationLessonIndex;
-          const knowledge = knowledges.length
-            ? knowledges[lessonIndex % knowledges.length]
-            : '';
-
-          let methodologies = [];
-          if (!evaluation) {
-            if (nonEvaluationCounter === 0) {
-              methodologies = [expositive || fallbackMethod].filter(Boolean);
-            } else if (nonEvaluationCounter === 1) {
-              methodologies = [exercise || expositive || fallbackMethod].filter(Boolean);
-            } else {
-              const cycle = (nonEvaluationCounter - 2) % 3;
-              if (cycle === 0) {
-                methodologies = [mindMap || expositive || fallbackMethod].filter(Boolean);
-              } else if (cycle === 1) {
-                methodologies = [expositive, mindMap].filter(Boolean);
-              } else {
-                methodologies = [exercise, mindMap].filter(Boolean);
-              }
-              if (!methodologies.length && fallbackMethod) methodologies = [fallbackMethod];
-            }
-            methodologies = Array.from(new Set(methodologies.filter(Boolean)));
-            nonEvaluationCounter += 1;
-          }
-
-          addInstruction(lessonRef.week, {
-            rowIndex: lessonRef.row.rowIndex,
-            kind: 'science',
-            discipline: lessonRef.row.discipline,
-            date: lessonRef.row.date,
-            abilityValue: ability.value,
-            abilityLabel: ability.label,
-            abilityIndex: block.abilityIndex,
-            knowledge,
-            methodologies,
-            evaluation
-          });
-
-          addReportRow({
-            week: lessonRef.week,
-            date: lessonRef.row.date,
-            discipline: lessonRef.row.discipline,
-            kind: 'Ciências/Biologia',
-            ability: ability.label,
-            knowledge,
-            methodologies: methodologies.join(' | '),
-            evaluation: evaluation ? 'Sim' : 'Não',
-            manualText: ''
-          });
-        });
-      });
+      }
+      for(let offset=1;offset<=abilities.length;offset++){
+        const index=(lastIndex+offset)%abilities.length;
+        const ability=abilities[index];
+        if((used.get(String(ability.value))||0)===minimum){
+          lastIndex=index;
+          lastAbility=String(ability.value);
+          return ability;
+        }
+      }
+      return null;
     }
-
-    state.executionPlan = weekAssignments;
-    state.reportRows = reportRows;
-    state.computed = {
-      abilityCount: abilities.length,
-      mappedScienceWeeks: scienceWeekEntries.length,
-      totalWeeks: orderedSummaries.length,
-      usedAbilities: abilityBlocks.length,
-      weekDivision: abilityBlocks.map((block) => ({
-        abilityIndex: block.abilityIndex + 1,
-        ability: block.ability.label,
-        weeks: block.weeks
-      }))
+    for(const summary of allSummaries){
+      if(!selected.has(Number(summary.week)))continue;
+      const instructions=[];
+      plans[String(summary.week)]={week:summary.week,instructions};
+      const existingWeekSkill=summary.rows
+        .filter((row)=>row.kind==='science'&&row.existingAbilityValue)
+        .map((row)=>getAbility(row.existingAbilityValue)).find(Boolean)||null;
+      const hasBlankScience=summary.rows.some((row)=>row.kind==='science'&&!row.existingAbilityValue);
+      const chosen=existingWeekSkill||(hasBlankScience?pickAbility():null);
+      if(!existingWeekSkill&&chosen){
+        const key=String(chosen.value);
+        used.set(key,(used.get(key)||0)+1);
+      }
+      if(existingWeekSkill)lastAbility=String(existingWeekSkill.value);
+  
+      for(const row of summary.rows){
+        if(row.kind==='practice'||row.manualProfile){
+          if(row.existingManualText){preserved.manual+=1;continue;}
+          const profile=row.manualProfile||getManualDisciplineProfile(row.discipline);
+          const manualText=row.kind==='practice'?CONFIG.practiceText:(profile?.manualText||'');
+          if(!manualText)continue;
+          instructions.push({rowIndex:row.rowIndex,kind:row.kind,date:row.date,discipline:row.discipline,manualText});
+          reports.push({week:summary.week,date:row.date,discipline:row.discipline,
+            kind:row.kind==='practice'?'Prática Experimental':(profile?.reportKind||row.discipline),
+            ability:'',knowledge:'',methodologies:'',evaluation:'Não',manualText});
+          continue;
+        }
+        if(row.kind!=='science')continue;
+        const prev=!!row.existingAbilityValue;
+        const ability=prev?getAbility(row.existingAbilityValue):chosen;
+        if(!ability){
+          appendLog(state,'Habilidade indisponível para completar uma aula; registro preservado.',{
+            week:summary.week,row:row.rowIndex+1,previous:row.existingAbilityValue||''
+          });
+          continue;
+        }
+        const knowledgeFilled=!!row.existingKnowledgeCount;
+        const methodFilled=!!row.existingMethodologyCount;
+        const isEvaluation=row.existingEvaluation==='true';
+        if(prev && knowledgeFilled && (methodFilled||isEvaluation)){
+          preserved.structured+=1;
+          continue;
+        }
+        const position=instructions.filter((item)=>item.kind==='science'&&item.abilityValue===String(ability.value)).length;
+        const knowledges=ability.knowledges||[];
+        const methods=ability.methodologies||[];
+        const preferences=position===0
+          ?['Aula expositiva/dialogada','Aula dialogada','Aula expositiva']
+          :position===1
+            ?['Resolução de exercícios','Resolução de problemas']
+            :position%3===2
+              ?['Mapa Mental']
+              :['Aula expositiva/dialogada','Resolução de exercícios','Mapa Mental'];
+        const method=findPreferredMethod(methods,preferences)||methods[0]||null;
+        const instruction={
+          rowIndex:row.rowIndex,kind:'science',discipline:row.discipline,date:row.date,
+          abilityValue:String(ability.value),abilityLabel:ability.label,
+          knowledge:knowledges.length?knowledges[position%knowledges.length]:'',
+          methodologies:method?[method]:[],evaluation:false,previouslySelected:prev,
+          weekForReport:summary.week
+        };
+        instructions.push(instruction);
+        reports.push({week:summary.week,date:row.date,discipline:row.discipline,
+          kind:prev?'Ciências/Biologia (completar)':'Ciências/Biologia',
+          ability:ability.label,knowledge:instruction.knowledge,
+          methodologies:instruction.methodologies.join(' | '),evaluation:'Não',manualText:''});
+      }
+    }
+    // A avaliação sugerida recai sobre a última aula nova de cada bloco
+    // consecutivo de habilidades, sem alterar indicadores preexistentes.
+    let pending=[];
+    let previousValue='';
+    function finishBlock(){
+      const last=[...pending].reverse().find((item)=>!item.previouslySelected);
+      if(last){
+        last.evaluation=true;
+        last.methodologies=[];
+        const report=reports.find((row)=>row.week===last.weekForReport &&
+          row.date===last.date&&row.discipline===last.discipline&&row.ability===last.abilityLabel);
+        if(report){report.evaluation='Sim';report.methodologies='';}
+      }
+      pending=[];
+    }
+    for(const week of state.weeks){
+      const plan=plans[String(week.week)];
+      if(!plan){finishBlock();previousValue='';continue;}
+      for(const instr of plan.instructions.filter((item)=>item.kind==='science')){
+        if(previousValue&&previousValue!==instr.abilityValue)finishBlock();
+        pending.push(instr);
+        previousValue=instr.abilityValue;
+      }
+    }
+    finishBlock();
+  
+    state.executionPlan=plans;
+    state.reportRows=reports;
+    state.applyWeeks=state.weeks.filter((week)=>(plans[String(week.week)]?.instructions.length||0)>0);
+    state.computed={
+      abilityCount:abilities.length,totalWeeks:state.weeks.length,
+      selectedWeeks:selected.size,weeksToFill:state.applyWeeks.length,
+      preserved,skillUsage:Array.from(used.entries()).map(([value,weeks])=>({ability:getAbility(value)?.label||value,weeks}))
     };
-
-    appendLog(state, 'Plano calculado.', {
-      abilityCount: state.computed.abilityCount,
-      mappedScienceWeeks: state.computed.mappedScienceWeeks,
-      totalWeeks: state.computed.totalWeeks,
-      usedAbilities: state.computed.usedAbilities,
-      weekDivision: state.computed.weekDivision
-    });
+    appendLog(state,'Leitura concluída: serão preenchidas apenas as lacunas encontradas.',state.computed);
     return state;
   }
 
-  function initializeSelect2IfNeeded(select) {
+    function initializeSelect2IfNeeded(select) {
     if (!select || !window.jQuery || !window.jQuery.fn || !window.jQuery.fn.select2) return;
     const $select = window.jQuery(select);
     if ($select.data('select2')) return;
@@ -1258,7 +1191,7 @@ function getExistingFieldsInRow(tr) {
   async function applyInstructionToRow(state, rowElement, instruction) {
     if (instruction.kind !== 'science') {
       const textarea = qs('textarea', rowElement);
-      if (textarea && instruction.manualText) {
+      if (textarea && instruction.manualText && !String(textarea.value || '').trim()) {
         setTextareaValue(textarea, instruction.manualText);
       }
       return;
@@ -1266,6 +1199,13 @@ function getExistingFieldsInRow(tr) {
 
     const block = await ensureStructuredBlock(rowElement);
     initializeSelectsInRoot(block);
+    const selectedBefore = String(qs('.structured-weekly-plan-id-select', block)?.value || '').trim();
+    if (selectedBefore && selectedBefore !== String(instruction.abilityValue)) {
+      appendLog(state, 'Habilidade já registrada diverge do plano calculado; não sobrescrever.', {
+        week: getCurrentWeekFromForm(), row: instruction.rowIndex+1, selectedBefore
+      });
+      return;
+    }
     const ability = getAbilityFromState(state, instruction.abilityValue);
 
     const evaluationSelect = qs('.structured-weekly-plan-evaluation-select', block);
@@ -1286,7 +1226,9 @@ function getExistingFieldsInRow(tr) {
       setStructuredAbilityOptionData(targetAbilityOption, ability);
     }
 
-    const abilitySelected = await populateSelectRobust(abilitySelect, [String(instruction.abilityValue)], false);
+    const abilitySelected = selectedBefore
+      ? true
+      : await populateSelectRobust(abilitySelect, [String(instruction.abilityValue)], false);
     if (!abilitySelected) {
       throw new Error(`Não foi possível selecionar a habilidade ${instruction.abilityLabel}.`);
     }
@@ -1305,8 +1247,10 @@ function getExistingFieldsInRow(tr) {
       methodologySelect = qs('.structured-weekly-plan-methodologies-select', block) || methodologySelect;
     }
 
-    const selectedKnowledges = getFallbackDesiredValues(knowledgeSelect, instruction.knowledge ? [instruction.knowledge] : []);
-    const selectedMethodologies = getFallbackDesiredValues(methodologySelect, instruction.methodologies || []);
+    const hasKnowledge = !!getSelectedValues(knowledgeSelect).length;
+    const hasMethodology = !!getSelectedValues(methodologySelect).length;
+    const selectedKnowledges = hasKnowledge ? [] : getFallbackDesiredValues(knowledgeSelect, instruction.knowledge ? [instruction.knowledge] : []);
+    const selectedMethodologies = hasMethodology ? [] : getFallbackDesiredValues(methodologySelect, instruction.methodologies || []);
     const fallbackKnowledges = ability?.knowledges || selectedKnowledges;
     const fallbackMethodologies = ability?.methodologies || selectedMethodologies;
 
@@ -1435,7 +1379,7 @@ function getExistingFieldsInRow(tr) {
       }
     }
 
-    if (evaluationSelect) {
+    if (evaluationSelect && !String(evaluationSelect.value || '').trim()) {
       evaluationSelect.value = instruction.evaluation ? 'true' : 'false';
       evaluationSelect.dispatchEvent(new Event('input', { bubbles: true }));
       evaluationSelect.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1496,17 +1440,22 @@ function getExistingFieldsInRow(tr) {
     state.applyIndex = 0;
     state.waitingReturn = false;
     buildExecutionPlan(state);
-    saveState(state);
-
-    await sleep(CONFIG.navigationDelayMs);
-    if (state.weeks.length) {
-      location.href = state.weeks[0].url;
+    if (!state.applyWeeks.length) {
+      state.status = 'done';
+      appendLog(state, 'Nenhuma lacuna foi encontrada nas semanas escolhidas.');
+      saveState(state);
+      renderPanel();
+      alert('Leitura concluída: não há lacunas detectadas nas semanas escolhidas.');
+      return;
     }
+    saveState(state);
+    await sleep(CONFIG.navigationDelayMs);
+    location.href = state.applyWeeks[0].url;
   }
 
   async function handleApplyPage(state) {
     const currentWeek = getCurrentWeekFromForm();
-    const expectedWeek = state.weeks[state.applyIndex]?.week;
+    const expectedWeek = (state.applyWeeks || state.weeks)[state.applyIndex]?.week;
     if (currentWeek !== expectedWeek) {
       appendLog(state, 'Semana aberta não corresponde à esperada na aplicação.', { currentWeek, expectedWeek });
       saveState(state);
@@ -1566,14 +1515,15 @@ function getExistingFieldsInRow(tr) {
     if (!state.waitingReturn) return;
 
     const lastWeek = Number(state.lastAppliedWeek);
-    const currentIndex = state.weeks.findIndex((item) => item.week === lastWeek);
+    const applying=state.applyWeeks||state.weeks;
+    const currentIndex = applying.findIndex((item) => item.week === lastWeek);
     const nextIndex = currentIndex + 1;
 
     state.waitingReturn = false;
     state.applyIndex = nextIndex;
     saveState(state);
 
-    if (nextIndex >= state.weeks.length) {
+    if (nextIndex >= applying.length) {
       state.status = 'done';
       state.finishedAt = new Date().toISOString();
       appendLog(state, 'Processo concluído.');
@@ -1584,7 +1534,7 @@ function getExistingFieldsInRow(tr) {
       return;
     }
 
-    location.href = state.weeks[nextIndex].url;
+    location.href = applying[nextIndex].url;
   }
 
   function resumeAutomation(state) {
@@ -1608,7 +1558,7 @@ function getExistingFieldsInRow(tr) {
         state.applyIndex = 0;
         state.waitingReturn = false;
         saveState(state);
-        if (state.weeks.length) location.href = state.weeks[0].url;
+        if (state.applyWeeks?.length) location.href = state.applyWeeks[0].url;
         return;
       }
       saveState(state);
@@ -1622,7 +1572,7 @@ function getExistingFieldsInRow(tr) {
         return;
       }
 
-      const nextWeek = state.weeks[state.applyIndex];
+      const nextWeek = (state.applyWeeks || state.weeks)[state.applyIndex];
       if (!nextWeek) {
         state.status = 'done';
         state.finishedAt = new Date().toISOString();
@@ -1735,7 +1685,7 @@ function openWeekSelectionModal() {
       return `Mapeando semanas ${state.scanIndex}/${state.weeks.length}`;
     }
     if (state.status === 'applying') {
-      return `Aplicando preenchimento ${state.applyIndex}/${state.weeks.length}`;
+      return `Aplicando preenchimento ${state.applyIndex}/${(state.applyWeeks || state.weeks).length}`;
     }
     if (state.status === 'done') {
       return `Concluído. Semanas processadas: ${state.weeks.length}`;
@@ -1752,12 +1702,14 @@ function openWeekSelectionModal() {
       return { percent: 100, label: 'Processo concluído', week: 'Todas as semanas previstas' };
     }
     const scanning = state.status === 'scanning';
-    const index = Math.min(total, Math.max(0, scanning ? (state.scanIndex || 0) : (state.applyIndex || 0)));
-    const percent = Math.round((scanning ? 0 : 50) + 50 * index / total);
-    const current = state.weeks[Math.min(index, total - 1)];
+    const stageWeeks = scanning ? state.weeks : (state.applyWeeks || state.weeks);
+    const stageTotal = Math.max(1,stageWeeks.length);
+    const index = Math.min(stageTotal, Math.max(0, scanning ? (state.scanIndex || 0) : (state.applyIndex || 0)));
+    const percent = Math.round((scanning ? 0 : 50) + 50 * index / stageTotal);
+    const current = stageWeeks[Math.min(index, stageWeeks.length - 1)];
     return {
       percent,
-      label: (scanning ? 'Mapeamento' : 'Preenchimento') + ': ' + index + '/' + total + ' semanas',
+      label: (scanning ? 'Mapeamento' : 'Preenchimento') + ': ' + index + '/' + stageTotal + ' semanas',
       week: current ? ('Semana ' + current.week + (current.period ? ' · ' + current.period : '')) : '—'
     };
   }
