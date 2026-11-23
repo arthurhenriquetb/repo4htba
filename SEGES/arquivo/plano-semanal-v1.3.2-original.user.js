@@ -1,0 +1,1986 @@
+// ==UserScript==
+// @name         Plano Semanal - Automação de preenchimento
+// @namespace    https://openai.local/
+// @version      1.3.2
+// @description  Preenche planos semanais com habilidades em ordem crescente, retomada automática, disciplinas textuais e relatório final.
+// @match        *://*/*weekly_plans*
+// @grant        none
+// @run-at       document-idle
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  const STORAGE_KEY = 'vm_plano_semanal_automacao_v1';
+  const REPORT_WINDOW_KEY = 'vm_plano_semanal_report_open';
+
+  const CONFIG = {
+    manualDropdownMode: false,
+    practiceRegex: /PR[ÁA]TICAS?\s+EXPERIMENTA(?:L|IS)(?:\s+DE\s+CI[ÊE]NCIAS)?/i,
+    scienceRegex: /(CI[ÊE]NCIAS|BIOLOGIA)/i,
+    electiveRegex: /ELETIVAS?/i,
+    scientificThinkingRegex: /PENSAMENTO\s+CIENT[ÍI]FICO/i,
+    projectLifeRegex: /PROJETO\s+DE\s+VIDA/i,
+    guidedStudyRegex: /ESTUDO\s+ORIENTADO/i,
+    protagonismClubRegex: /(PROTAGONISMO|CLUBE)/i,
+    practiceText:
+      'Aula ministrada com o conteúdo: aplicação de atividades com a metodologia de resolução de problemas e confecção de projetos elaborados em conformidade com o conteúdo ministrado semanalmente, para que os alunos tenham a oportunidade de realizar alguma tarefa ou observar algum experimento que mostre o conteúdo de forma prática e lúdica associado ao cotidiano dos estudantes.',
+    electiveText:
+      'Eletiva multisseriada ministrada com conteúdo interdisciplinar, visando fortalecer as disciplinas da base curricular (BNCC) por meio de uma abordagem integradora lúdica e em consonância com o Guia de Aprendizagem, avaliações diagnósticas e varal dos sonhos.',
+    scientificThinkingText:
+      'Planejamento e execução de materiais didáticos interativos, associados ao material estruturado de pensamento científico, acompanhado da exposição de documentários de divulgação científica.',
+    projectLifeText:
+      'Aula ministrada para a disciplina de Projeto de Vida, Com o conteúdo Multisseriado e interdisciplinar para fortalecer as disciplinas da base curricular (BNCC) por meio de uma abordagem integradora lúdica e em consonância com o Guia de Aprendizagem, avaliações diagnósticas e varal dos sonhos do projeto de vida dos estudantes.',
+    guidedStudyText:
+      'Aplicação de atividades enviadas previamente pelos demais professores de outras disciplinas, em consonância com as diretrizes e temáticas dispostas na BNCC e orientações curriculares da SEDU, através da metodologia de resolução de exercícios e estímulo ao protagonismo dos estudantes para resolução das atividades.',
+    protagonismClubText:
+      'Aula ministrada para a disciplina de Clube de Protagonismo com conteúdos desenvolvidos de acordo com o Material Estruturado, em consonância com o currículo e varal dos sonhos dos estudantes.',
+    scanDelayMs: 110,
+    applyDelayMs: 220,
+    saveDelayMs: 520,
+    navigationDelayMs: 170,
+    selectPopulateTimeoutMs: 3800,
+    selectRetryCount: 3,
+    afterAbilityDelayMs: 720,
+    afterKnowledgeDelayMs: 180,
+    afterMethodologyDelayMs: 180,
+    panelId: 'vm-plano-semanal-panel',
+    modalId: 'vm-plano-semanal-modal',
+    debugMode: false,
+    maxWeeksPerRun: null,
+    panelLogCount: 12
+  };
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const qs = (sel, root = document) => root.querySelector(sel);
+  const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+  function normalizeText(text) {
+    return String(text || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function decodeHtmlEntities(text) {
+    const textarea = document.createElement('textarea');
+    textarea.innerHTML = String(text || '');
+    return textarea.value;
+  }
+
+  function getManualDisciplineProfile(discipline) {
+    const rawDiscipline = String(discipline || '').trim();
+    if (!rawDiscipline) return null;
+
+    if (CONFIG.electiveRegex.test(rawDiscipline)) {
+      return {
+        kind: 'elective',
+        reportKind: 'Eletiva',
+        manualText: CONFIG.electiveText
+      };
+    }
+
+    if (CONFIG.scientificThinkingRegex.test(rawDiscipline)) {
+      return {
+        kind: 'scientific_thinking',
+        reportKind: 'Pensamento Científico',
+        manualText: CONFIG.scientificThinkingText
+      };
+    }
+
+    if (CONFIG.projectLifeRegex.test(rawDiscipline)) {
+      return {
+        kind: 'project_life',
+        reportKind: 'Projeto de Vida',
+        manualText: CONFIG.projectLifeText
+      };
+    }
+
+    if (CONFIG.guidedStudyRegex.test(rawDiscipline)) {
+      return {
+        kind: 'guided_study',
+        reportKind: 'Estudo Orientado',
+        manualText: CONFIG.guidedStudyText
+      };
+    }
+
+    if (CONFIG.protagonismClubRegex.test(rawDiscipline)) {
+      return {
+        kind: 'protagonism_club',
+        reportKind: 'Clube/Protagonismo',
+        manualText: CONFIG.protagonismClubText
+      };
+    }
+
+    return null;
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      console.error('[VM Plano Semanal] Falha ao carregar estado:', error);
+      return null;
+    }
+  }
+
+  function saveState(state) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function clearState() {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(REPORT_WINDOW_KEY);
+  }
+
+  function appendLog(state, message, extra = null) {
+    if (!state.logs) state.logs = [];
+    state.logs.push({
+      at: new Date().toISOString(),
+      message,
+      extra
+    });
+    if (state.logs.length > 500) state.logs = state.logs.slice(-500);
+    try {
+      if (typeof renderPanel === 'function') setTimeout(() => { try { renderPanel(); } catch (_) {} }, 0);
+    } catch (_) {}
+  }
+
+  function getUrl(url) {
+    try {
+      return new URL(url, location.origin);
+    } catch {
+      return null;
+    }
+  }
+
+  function getCurrentWeekFromForm() {
+    const hidden = qs('#weekly_plan_week');
+    if (hidden && hidden.value) return Number(hidden.value);
+
+    const url = getUrl(location.href);
+    const week = url?.searchParams.get('week');
+    return week ? Number(week) : null;
+  }
+
+  function getCurrentClassroomId() {
+    const hidden = qs('#classroom_id');
+    if (hidden && hidden.value) return String(hidden.value);
+    const url = getUrl(location.href);
+    return url?.searchParams.get('classroom_id') || null;
+  }
+
+  function isClassroomsPage() {
+    return !!qsa('a.btn.btn-sm.btn-primary').find((a) => {
+      const href = a.getAttribute('href') || '';
+      return href.includes('/weekly_plans?classroom_id=');
+    });
+  }
+
+  function isWeeksPage() {
+    return !!qsa('a.btn.btn-sm.btn-primary').find((a) => {
+      const href = a.getAttribute('href') || '';
+      return href.includes('/weekly_plans/new?classroom_id=') || href.includes('/weekly_plans/') && href.includes('/edit');
+    }) && !qs('#weekly_plan');
+  }
+
+  function isWeekFormPage() {
+    return !!qs('#weekly_plan') && !!qs('input[type="submit"][value="Salvar"], input[name="commit"][value="Salvar"]');
+  }
+
+  function uniqueBy(items, keyFn) {
+    const seen = new Set();
+    return items.filter((item) => {
+      const key = keyFn(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function parseJsonArrayMaybe(value) {
+    if (!value) return [];
+    const raw = decodeHtmlEntities(value).trim();
+    if (!raw) return [];
+
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map((item) => String(item).trim()).filter(Boolean) : [];
+    } catch {
+      const withoutBrackets = raw.replace(/^\[/, '').replace(/\]$/, '');
+      return withoutBrackets
+        .split(',')
+        .map((item) => item.replace(/^"|"$/g, '').replace(/^&quot;|&quot;$/g, '').trim())
+        .filter(Boolean);
+    }
+  }
+
+  function findPreferredMethod(available, preferredNames) {
+    if (!available.length) return null;
+    const normalizedMap = available.map((item) => ({ raw: item, key: normalizeText(item) }));
+    for (const preferred of preferredNames) {
+      const key = normalizeText(preferred);
+      const exact = normalizedMap.find((entry) => entry.key === key);
+      if (exact) return exact.raw;
+      const partial = normalizedMap.find((entry) => entry.key.includes(key) || key.includes(entry.key));
+      if (partial) return partial.raw;
+    }
+    return null;
+  }
+
+  function parseAbilityOptionsFromRow(row) {
+    const addButton = qs('.add_fields[data-association-insertion-template]', row);
+    if (!addButton) return [];
+
+    const template = decodeHtmlEntities(addButton.getAttribute('data-association-insertion-template') || '');
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = template;
+
+    const abilitySelect = qs('.structured-weekly-plan-id-select', wrapper);
+    if (!abilitySelect) return [];
+
+    return uniqueBy(
+      Array.from(abilitySelect.options)
+        .filter((option) => option.value)
+        .map((option) => ({
+          value: String(option.value),
+          label: String(option.textContent || '').trim(),
+          knowledges: parseJsonArrayMaybe(option.getAttribute('data-knowledges')),
+          methodologies: parseJsonArrayMaybe(option.getAttribute('data-methodologies')),
+          descriptors: parseJsonArrayMaybe(option.getAttribute('data-descriptors'))
+        }))
+        .filter((item) => item.value && item.label),
+      (item) => `${item.value}::${item.label}`
+    );
+  }
+
+  async function extractAbilitiesFromPage(state) {
+    const firstScienceRow = qsa('#weekly_plan tr.by-curriculum-discipline').find((tr) => {
+      const discipline = (tr.querySelectorAll('td')[1]?.textContent || '').trim();
+      return CONFIG.scienceRegex.test(discipline) && !getManualDisciplineProfile(discipline);
+    });
+    if (!firstScienceRow) return [];
+
+    try {
+      const block = await ensureStructuredBlock(firstScienceRow);
+      initializeSelectsInRoot(block);
+      const abilitySelect = qs('.structured-weekly-plan-id-select', block);
+      if (!abilitySelect) return [];
+
+      await waitFor(() => Array.from(abilitySelect.options || []).filter((opt) => opt.value).length > 0, 5000, 120);
+
+      const abilities = uniqueBy(
+        Array.from(abilitySelect.options)
+          .filter((option) => option && option.value)
+          .map((option) => ({
+            value: String(option.value),
+            label: String(option.textContent || '').trim(),
+            knowledges: parseJsonArrayMaybe(option.getAttribute('data-knowledges') || option.dataset.knowledges),
+            methodologies: parseJsonArrayMaybe(option.getAttribute('data-methodologies') || option.dataset.methodologies),
+            descriptors: parseJsonArrayMaybe(option.getAttribute('data-descriptors') || option.dataset.descriptors)
+          }))
+          .filter((item) => item.value && item.label),
+        (item) => `${item.value}::${item.label}`
+      );
+
+      return abilities;
+    } catch (error) {
+      appendLog(state, 'Falha ao extrair habilidades a partir da página.', { message: String(error?.message || error) });
+      return [];
+    }
+  }
+
+  function parseWeeksTable() {
+    const rows = qsa('table.table.table-striped tbody tr.middle');
+    return rows
+      .map((tr) => {
+        const cells = tr.querySelectorAll('td');
+        if (cells.length < 4) return null;
+        const link = qs('a.btn.btn-sm.btn-primary', tr);
+        if (!link) return null;
+        const href = link.getAttribute('href') || '';
+        const url = getUrl(href);
+        const week = Number((cells[0].textContent || '').trim());
+        if (!url || Number.isNaN(week)) return null;
+        return {
+          week,
+          period: (cells[1].textContent || '').trim(),
+          statusLabel: (cells[2].textContent || '').trim(),
+          url: url.href
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.week - b.week);
+  }
+
+  function parseCurrentWeekSummary() {
+    const week = getCurrentWeekFromForm();
+    const rows = qsa('#weekly_plan tr.by-curriculum-discipline').map((tr, index) => {
+      const tds = tr.querySelectorAll('td');
+      const lessonNumber = Number((tds[0]?.textContent || '').trim()) || index + 1;
+      const discipline = (tds[1]?.textContent || '').trim();
+      const dateInput = qs('input[name*="[date]"]', tr);
+      const date = dateInput?.value || '';
+      const manualTextarea = qs('textarea', tr);
+      const manualProfile = getManualDisciplineProfile(discipline);
+      const kind = CONFIG.practiceRegex.test(discipline)
+        ? 'practice'
+        : manualProfile?.kind
+          ? manualProfile.kind
+          : CONFIG.scienceRegex.test(discipline)
+            ? 'science'
+            : 'other';
+
+      return {
+        rowIndex: index,
+        lessonNumber,
+        discipline,
+        date,
+        kind,
+        manualProfile,
+        hasManual: !!manualTextarea
+      };
+    });
+
+    const firstScienceRow = qsa('#weekly_plan tr.by-curriculum-discipline').find((tr) => {
+      const discipline = (tr.querySelectorAll('td')[1]?.textContent || '').trim();
+      return CONFIG.scienceRegex.test(discipline) && !getManualDisciplineProfile(discipline);
+    });
+
+    const abilities = firstScienceRow ? parseAbilityOptionsFromRow(firstScienceRow) : [];
+
+    return {
+      week,
+      classroomId: getCurrentClassroomId(),
+      rows,
+      scienceRows: rows.filter((row) => row.kind === 'science').length,
+      practiceRows: rows.filter((row) => row.kind === 'practice').length,
+      manualRows: rows.filter((row) => !!row.manualProfile).length,
+      abilities
+    };
+  }
+
+  function buildExecutionPlan(state) {
+    const orderedSummaries = state.weeks
+      .map((item) => state.summaries[String(item.week)])
+      .filter(Boolean);
+
+    const abilities = uniqueBy(state.abilities || [], (item) => `${item.value}::${item.label}`);
+    const scienceWeekEntries = orderedSummaries.filter((summary) => summary.rows.some((row) => row.kind === 'science'));
+
+    const weekAssignments = {};
+    const reportRows = [];
+
+    if (!abilities.length) {
+      appendLog(state, 'Nenhuma habilidade encontrada. O plano será gerado apenas para Práticas Experimentais e disciplinas textuais configuradas, se existirem.');
+    }
+
+    orderedSummaries.forEach((summary) => {
+      weekAssignments[String(summary.week)] = {
+        week: summary.week,
+        instructions: []
+      };
+    });
+
+    const addReportRow = (row) => reportRows.push(row);
+    const addInstruction = (week, instruction) => {
+      if (!weekAssignments[String(week)]) {
+        weekAssignments[String(week)] = { week, instructions: [] };
+      }
+      weekAssignments[String(week)].instructions.push(instruction);
+    };
+
+    orderedSummaries.forEach((summary) => {
+      const manualRows = summary.rows.filter((row) => row.kind === 'practice' || !!row.manualProfile);
+      manualRows.forEach((row) => {
+        const manualProfile = row.manualProfile || getManualDisciplineProfile(row.discipline);
+        const manualText = row.kind === 'practice'
+          ? CONFIG.practiceText
+          : (manualProfile?.manualText || '');
+        const reportKind = row.kind === 'practice'
+          ? 'Prática Experimental'
+          : (manualProfile?.reportKind || row.discipline);
+
+        addInstruction(summary.week, {
+          rowIndex: row.rowIndex,
+          kind: row.kind,
+          discipline: row.discipline,
+          date: row.date,
+          manualText
+        });
+
+        addReportRow({
+          week: summary.week,
+          date: row.date,
+          discipline: row.discipline,
+          kind: reportKind,
+          ability: '',
+          knowledge: '',
+          methodologies: '',
+          evaluation: 'Não',
+          manualText
+        });
+      });
+    });
+
+    const weekAbilityIndexByWeek = new Map();
+    const abilityBlocks = [];
+
+    if (abilities.length && scienceWeekEntries.length) {
+      const totalScienceWeeks = scienceWeekEntries.length;
+      const totalAbilities = abilities.length;
+
+      if (totalScienceWeeks <= totalAbilities) {
+        scienceWeekEntries.forEach((entry, index) => {
+          weekAbilityIndexByWeek.set(String(entry.week), index);
+        });
+      } else {
+        const baseWeeksPerAbility = Math.floor(totalScienceWeeks / totalAbilities);
+        const extraWeeks = totalScienceWeeks % totalAbilities;
+        let weekCursor = 0;
+
+        abilities.forEach((ability, abilityIndex) => {
+          const blockSize = baseWeeksPerAbility + (abilityIndex < extraWeeks ? 1 : 0);
+          for (let n = 0; n < blockSize && weekCursor < totalScienceWeeks; n += 1) {
+            weekAbilityIndexByWeek.set(String(scienceWeekEntries[weekCursor].week), abilityIndex);
+            weekCursor += 1;
+          }
+        });
+      }
+
+      let currentBlock = null;
+      scienceWeekEntries.forEach((entry) => {
+        const weekKey = String(entry.week);
+        const abilityIndex = weekAbilityIndexByWeek.get(weekKey);
+        if (abilityIndex == null) return;
+        if (!currentBlock || currentBlock.abilityIndex !== abilityIndex) {
+          currentBlock = {
+            abilityIndex,
+            ability: abilities[abilityIndex],
+            weeks: []
+          };
+          abilityBlocks.push(currentBlock);
+        }
+        currentBlock.weeks.push(entry.week);
+      });
+
+      abilityBlocks.forEach((block) => {
+        const ability = block.ability;
+        const availableMethods = ability.methodologies || [];
+        const knowledges = ability.knowledges || [];
+
+        const expositive = findPreferredMethod(availableMethods, [
+          'Aula expositiva/dialogada',
+          'Aula dialogada',
+          'Aula expositiva'
+        ]);
+        const exercise = findPreferredMethod(availableMethods, [
+          'Resolução de exercícios',
+          'Resolução de Problemas',
+          'Resolução de problemas'
+        ]);
+        const mindMap = findPreferredMethod(availableMethods, ['Mapa Mental']);
+        const fallbackMethod = availableMethods[0] || null;
+
+        const lessonRefs = [];
+        block.weeks.forEach((week) => {
+          const summary = state.summaries[String(week)];
+          if (!summary) return;
+          summary.rows
+            .filter((row) => row.kind === 'science')
+            .forEach((row) => lessonRefs.push({ week, row, summary }));
+        });
+
+        const evaluationLessonIndex = lessonRefs.length ? lessonRefs.length - 1 : -1;
+        let nonEvaluationCounter = 0;
+
+        lessonRefs.forEach((lessonRef, lessonIndex) => {
+          const evaluation = lessonIndex === evaluationLessonIndex;
+          const knowledge = knowledges.length
+            ? knowledges[lessonIndex % knowledges.length]
+            : '';
+
+          let methodologies = [];
+          if (!evaluation) {
+            if (nonEvaluationCounter === 0) {
+              methodologies = [expositive || fallbackMethod].filter(Boolean);
+            } else if (nonEvaluationCounter === 1) {
+              methodologies = [exercise || expositive || fallbackMethod].filter(Boolean);
+            } else {
+              const cycle = (nonEvaluationCounter - 2) % 3;
+              if (cycle === 0) {
+                methodologies = [mindMap || expositive || fallbackMethod].filter(Boolean);
+              } else if (cycle === 1) {
+                methodologies = [expositive, mindMap].filter(Boolean);
+              } else {
+                methodologies = [exercise, mindMap].filter(Boolean);
+              }
+              if (!methodologies.length && fallbackMethod) methodologies = [fallbackMethod];
+            }
+            methodologies = Array.from(new Set(methodologies.filter(Boolean)));
+            nonEvaluationCounter += 1;
+          }
+
+          addInstruction(lessonRef.week, {
+            rowIndex: lessonRef.row.rowIndex,
+            kind: 'science',
+            discipline: lessonRef.row.discipline,
+            date: lessonRef.row.date,
+            abilityValue: ability.value,
+            abilityLabel: ability.label,
+            abilityIndex: block.abilityIndex,
+            knowledge,
+            methodologies,
+            evaluation
+          });
+
+          addReportRow({
+            week: lessonRef.week,
+            date: lessonRef.row.date,
+            discipline: lessonRef.row.discipline,
+            kind: 'Ciências/Biologia',
+            ability: ability.label,
+            knowledge,
+            methodologies: methodologies.join(' | '),
+            evaluation: evaluation ? 'Sim' : 'Não',
+            manualText: ''
+          });
+        });
+      });
+    }
+
+    state.executionPlan = weekAssignments;
+    state.reportRows = reportRows;
+    state.computed = {
+      abilityCount: abilities.length,
+      mappedScienceWeeks: scienceWeekEntries.length,
+      totalWeeks: orderedSummaries.length,
+      usedAbilities: abilityBlocks.length,
+      weekDivision: abilityBlocks.map((block) => ({
+        abilityIndex: block.abilityIndex + 1,
+        ability: block.ability.label,
+        weeks: block.weeks
+      }))
+    };
+
+    appendLog(state, 'Plano calculado.', {
+      abilityCount: state.computed.abilityCount,
+      mappedScienceWeeks: state.computed.mappedScienceWeeks,
+      totalWeeks: state.computed.totalWeeks,
+      usedAbilities: state.computed.usedAbilities,
+      weekDivision: state.computed.weekDivision
+    });
+    return state;
+  }
+
+  function initializeSelect2IfNeeded(select) {
+    if (!select || !window.jQuery || !window.jQuery.fn || !window.jQuery.fn.select2) return;
+    const $select = window.jQuery(select);
+    if ($select.data('select2')) return;
+
+    try {
+      $select.select2({
+        width: '100%'
+      });
+    } catch (error) {
+      console.warn('[VM Plano Semanal] Falha ao inicializar select2:', error);
+    }
+  }
+
+  function initializeSelectsInRoot(root) {
+    qsa('select.select2-select', root).forEach((select) => initializeSelect2IfNeeded(select));
+  }
+
+  function isVisibleElement(el) {
+    return !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+  }
+
+  function getSelect2ModeFromContainer(container) {
+    if (!container) return null;
+    if (container.querySelector('.select2-selection') || container.classList.contains('select2-container--default')) return 'v4';
+    if (container.querySelector('.select2-choice') || container.querySelector('.select2-choices') || container.classList.contains('select2-container-multi') || container.classList.contains('select2-container')) return 'v3';
+    return null;
+  }
+
+  function getSelect2Dropdown() {
+    const candidates = [
+      ...Array.from(document.querySelectorAll('.select2-container--open')),
+      ...Array.from(document.querySelectorAll('.select2-drop')),
+      ...Array.from(document.querySelectorAll('.select2-dropdown'))
+    ];
+    return candidates.find((el) => isVisibleElement(el)) || null;
+  }
+
+  async function openSelect2Dropdown(select) {
+    if (!select || !window.jQuery) return null;
+    const $select = window.jQuery(select);
+    const container = getSelect2Container(select);
+    const mode = getSelect2ModeFromContainer(container);
+
+    try {
+      if (typeof $select.select2 === 'function' && $select.data('select2')) {
+        $select.select2('open');
+      }
+    } catch (error) {
+      // segue para o clique manual
+    }
+
+    let dropdown = await waitFor(() => getSelect2Dropdown(), 1200, 60);
+    if (dropdown) return { dropdown, mode };
+
+    const clickTargets = [
+      container?.querySelector('.select2-selection'),
+      container?.querySelector('.select2-choice'),
+      container?.querySelector('.select2-choices'),
+      container?.querySelector('.select2-search-choice + .select2-search-field input'),
+      container
+    ].filter(Boolean);
+
+    for (const target of clickTargets) {
+      target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      target.click();
+      await sleep(160);
+      dropdown = getSelect2Dropdown();
+      if (dropdown) return { dropdown, mode: mode || getSelect2ModeFromContainer(container) };
+    }
+
+    return null;
+  }
+
+  async function setSelectValueViaPluginApi(select, desiredValues, multiple = false) {
+    if (!select || !window.jQuery) return false;
+    const resolvedValues = getResolvedOptionValues(select, desiredValues);
+    if (!resolvedValues.length) return false;
+
+    const $select = window.jQuery(select);
+    if (!(typeof $select.select2 === 'function' && $select.data('select2'))) return false;
+
+    try {
+      $select.select2('val', multiple ? resolvedValues : resolvedValues[0]);
+      $select.trigger('change');
+      $select.trigger('change.select2');
+    } catch (error) {
+      return false;
+    }
+
+    await sleep(180);
+    const selectedValues = getSelectedValues(select);
+    return multiple
+      ? resolvedValues.every((value) => selectedValues.includes(value))
+      : selectedValues[0] === resolvedValues[0] || String(select.value) === resolvedValues[0];
+  }
+
+  function findBestMatchingOption(select, rawValue) {
+    if (!select || !rawValue) return null;
+    const targetKey = normalizeText(rawValue);
+    const options = Array.from(select.options).filter((option) => String(option.value || '').trim());
+
+    let match = options.find((option) => normalizeText(option.value) === targetKey || normalizeText(option.textContent || '') === targetKey);
+    if (match) return match;
+
+    match = options.find((option) => {
+      const valueKey = normalizeText(option.value);
+      const textKey = normalizeText(option.textContent || '');
+      return valueKey.includes(targetKey) || targetKey.includes(valueKey) || textKey.includes(targetKey) || targetKey.includes(textKey);
+    });
+    return match || null;
+  }
+
+  function getResolvedOptionValues(select, desiredValues) {
+    return (desiredValues || [])
+      .filter(Boolean)
+      .map((raw) => findBestMatchingOption(select, raw))
+      .filter(Boolean)
+      .map((option) => String(option.value));
+  }
+
+  function getSelectedValues(select) {
+    return Array.from(select?.selectedOptions || []).map((option) => String(option.value)).filter(Boolean);
+  }
+
+  function rebuildSelectOptions(select, values) {
+    if (!select) return;
+    const unique = Array.from(new Set((values || []).map((item) => String(item || '').trim()).filter(Boolean)));
+    const currentValues = getSelectedValues(select);
+    while (select.options.length) {
+      select.remove(0);
+    }
+    unique.forEach((value) => {
+      const option = new Option(value, value, false, currentValues.includes(value));
+      select.add(option);
+    });
+    select.dispatchEvent(new Event('input', { bubbles: true }));
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    if (window.jQuery) {
+      const $select = window.jQuery(select);
+      try {
+        $select.trigger('change');
+        $select.trigger('change.select2');
+      } catch (error) {
+        console.warn('[VM Plano Semanal] Falha ao reconstruir opções do select:', error);
+      }
+    }
+  }
+
+  function setStructuredAbilityOptionData(option, ability) {
+    if (!option || !ability) return;
+    const knowledges = ability.knowledges || [];
+    const methodologies = ability.methodologies || [];
+    const descriptors = ability.descriptors || [];
+    option.setAttribute('data-knowledges', JSON.stringify(knowledges));
+    option.setAttribute('data-methodologies', JSON.stringify(methodologies));
+    option.setAttribute('data-descriptors', JSON.stringify(descriptors));
+    if (window.jQuery) {
+      try {
+        const $option = window.jQuery(option);
+        $option.data('knowledges', knowledges);
+        $option.data('methodologies', methodologies);
+        $option.data('descriptors', descriptors);
+      } catch (error) {
+        console.warn('[VM Plano Semanal] Falha ao gravar .data() da habilidade:', error);
+      }
+    }
+  }
+
+  function getFallbackDesiredValues(select, preferredValues) {
+    const preferred = (preferredValues || []).filter(Boolean);
+    if (preferred.length) return preferred;
+    const options = Array.from(select?.options || []).filter((option) => String(option.value || '').trim());
+    if (!options.length) return [];
+    if (options.length === 1) return [String(options[0].value)];
+    return [];
+  }
+
+  function getDependentValuesFromAbilityOption(option, fallbackAbility = null) {
+    const read = (attr, fallback) => {
+      const raw = option?.getAttribute(attr);
+      const parsed = parseJsonArrayMaybe(raw);
+      return parsed.length ? parsed : (fallback || []);
+    };
+
+    return {
+      descriptors: read('data-descriptors', fallbackAbility?.descriptors || []),
+      knowledges: read('data-knowledges', fallbackAbility?.knowledges || []),
+      methodologies: read('data-methodologies', fallbackAbility?.methodologies || [])
+    };
+  }
+
+  function syncSelectValueNow(select, desiredValues, multiple = false) {
+    if (!select) return false;
+    const resolvedValues = getResolvedOptionValues(select, desiredValues);
+    if (!resolvedValues.length) return false;
+
+    if (multiple) {
+      Array.from(select.options).forEach((option) => {
+        option.selected = resolvedValues.includes(String(option.value));
+      });
+    } else {
+      select.value = resolvedValues[0];
+      Array.from(select.options).forEach((option) => {
+        option.selected = String(option.value) === resolvedValues[0];
+      });
+    }
+
+    select.dispatchEvent(new Event('input', { bubbles: true }));
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+
+    if (window.jQuery) {
+      try {
+        const $select = window.jQuery(select);
+        $select.val(multiple ? resolvedValues : resolvedValues[0]);
+        $select.trigger('change');
+        $select.trigger('change.select2');
+      } catch (error) {
+        console.warn('[VM Plano Semanal] Falha ao sincronizar valor do select:', error);
+      }
+    }
+
+    const selectedValues = getSelectedValues(select);
+    return multiple
+      ? resolvedValues.every((value) => selectedValues.includes(value))
+      : selectedValues[0] === resolvedValues[0] || String(select.value) === resolvedValues[0];
+  }
+
+  async function syncSelectValueStable(select, desiredValues, multiple = false) {
+    if (!select) return false;
+    const desired = getFallbackDesiredValues(select, desiredValues);
+    if (!desired.length) return true;
+
+    const resolvedValues = getResolvedOptionValues(select, desired);
+    if (!resolvedValues.length) return false;
+
+    if (multiple) {
+      Array.from(select.options).forEach((option) => {
+        option.selected = resolvedValues.includes(String(option.value));
+      });
+    } else {
+      Array.from(select.options).forEach((option) => {
+        option.selected = String(option.value) === resolvedValues[0];
+      });
+      select.value = resolvedValues[0];
+    }
+
+    select.dispatchEvent(new Event('input', { bubbles: true }));
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+
+    if (window.jQuery) {
+      try {
+        const $select = window.jQuery(select);
+        $select.val(multiple ? resolvedValues : resolvedValues[0]);
+        $select.trigger('input');
+        $select.trigger('change');
+        $select.trigger('change.select2');
+      } catch (error) {
+        console.warn('[VM Plano Semanal] Falha ao sincronizar select de forma estável:', error);
+      }
+    }
+
+    await sleep(350);
+    const selectedValues = getSelectedValues(select);
+    return multiple
+      ? resolvedValues.every((value) => selectedValues.includes(value))
+      : selectedValues[0] === resolvedValues[0] || String(select.value) === resolvedValues[0];
+  }
+
+  function forcePopulateDependentSelects(block, ability = null) {
+    if (!block) return { descriptorsSelect: null, knowledgesSelect: null, methodologiesSelect: null };
+
+    const abilitySelect = qs('.structured-weekly-plan-id-select', block);
+    const selectedOption = abilitySelect?.selectedOptions?.[0] || null;
+    const dependentValues = getDependentValuesFromAbilityOption(selectedOption, ability);
+
+    const descriptorsSelect = qs('.structured-weekly-plan-descriptors-select', block);
+    const knowledgesSelect = qs('.structured-weekly-plan-knowledges-select', block);
+    const methodologiesSelect = qs('.structured-weekly-plan-methodologies-select', block);
+
+    if (descriptorsSelect && dependentValues.descriptors.length) {
+      rebuildSelectOptions(descriptorsSelect, dependentValues.descriptors);
+    }
+    if (knowledgesSelect && dependentValues.knowledges.length) {
+      rebuildSelectOptions(knowledgesSelect, dependentValues.knowledges);
+    }
+    if (methodologiesSelect) {
+      methodologiesSelect.disabled = false;
+      if (dependentValues.methodologies.length) {
+        rebuildSelectOptions(methodologiesSelect, dependentValues.methodologies);
+      }
+    }
+
+    initializeSelectsInRoot(block);
+    return { descriptorsSelect, knowledgesSelect, methodologiesSelect };
+  }
+
+  function getSelect2Container(select) {
+    if (!select || !select.id) return select?.nextElementSibling?.classList?.contains('select2') ? select.nextElementSibling : null;
+    const byId = document.querySelector(`span.select2[aria-labelledby="select2-${CSS.escape(select.id)}-container"]`);
+    if (byId) return byId;
+    const next = select.nextElementSibling;
+    if (next && next.classList && next.classList.contains('select2')) return next;
+    return null;
+  }
+
+
+  async function selectValuesViaSelect2(select, desiredValues, multiple = false) {
+    if (!select) return false;
+    const desired = (desiredValues || []).filter(Boolean);
+    if (!desired.length) return false;
+
+    const resolvedValues = getResolvedOptionValues(select, desired);
+    const desiredNorm = desired.map((item) => normalizeText(item));
+    const container = getSelect2Container(select);
+
+    const clearCurrent = () => {
+      if (window.jQuery) {
+        try {
+          const $select = window.jQuery(select);
+          if (typeof $select.select2 === 'function' && $select.data('select2')) {
+            $select.val(multiple ? [] : null).trigger('change');
+          }
+        } catch (error) {
+          console.warn('[VM Plano Semanal] Falha ao limpar select2:', error);
+        }
+      }
+      Array.from(select.options).forEach((option) => { option.selected = false; });
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    clearCurrent();
+    await sleep(180);
+
+    for (let i = 0; i < desired.length; i += 1) {
+      const opened = await openSelect2Dropdown(select);
+      if (!opened?.dropdown) return false;
+      const dropdown = opened.dropdown;
+      const mode = opened.mode || getSelect2ModeFromContainer(container) || 'v4';
+
+      const optionEl = await waitFor(() => {
+        const selector = mode === 'v4'
+          ? '.select2-container--open .select2-results__option, .select2-results__option'
+          : '.select2-drop .select2-results li, .select2-dropdown .select2-results li, .select2-results li, .select2-results__option';
+        const options = Array.from(document.querySelectorAll(selector))
+          .filter((el) => isVisibleElement(el))
+          .filter((el) => !el.classList.contains('select2-results__message'))
+          .filter((el) => !el.classList.contains('select2-disabled'))
+          .filter((el) => el.getAttribute('aria-disabled') !== 'true');
+
+        const exact = options.find((el) => {
+          const key = normalizeText(el.textContent || '');
+          return key === desiredNorm[i] || key.includes(desiredNorm[i]) || desiredNorm[i].includes(key);
+        });
+        if (exact) return exact;
+        if (options.length === 1) return options[0];
+        return null;
+      }, 3200, 100);
+
+      if (!optionEl) {
+        document.body.click();
+        return false;
+      }
+
+      const clickTarget = optionEl.querySelector('.select2-result-label') || optionEl;
+      clickTarget.scrollIntoView({ block: 'nearest' });
+      clickTarget.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      await sleep(40);
+      clickTarget.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+      clickTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      await sleep(420);
+
+      if (!multiple) break;
+    }
+
+    await sleep(260);
+    const selectedValues = getSelectedValues(select);
+    if (multiple) {
+      if (resolvedValues.length && resolvedValues.every((value) => selectedValues.includes(value))) return true;
+    } else {
+      if (resolvedValues[0] && (selectedValues[0] === resolvedValues[0] || String(select.value) === resolvedValues[0])) return true;
+    }
+
+    return syncSelectValueNow(select, desired, multiple);
+  }
+
+  async function clickSelect2OptionByText(select, desiredValues, multiple = false) {
+    if (!select) return false;
+    const desired = (desiredValues || []).filter(Boolean);
+    if (!desired.length) return false;
+
+    const resolvedValues = getResolvedOptionValues(select, desired);
+
+    for (const wanted of desired) {
+      const opened = await openSelect2Dropdown(select);
+      if (!opened?.dropdown) return false;
+      const dropdown = opened.dropdown;
+
+      const optionEl = await waitFor(() => {
+        const options = Array.from(document.querySelectorAll('.select2-results li, .select2-results__option'))
+          .filter((el) => isVisibleElement(el))
+          .filter((el) => !el.classList.contains('select2-results__message'))
+          .filter((el) => !el.classList.contains('select2-disabled'))
+          .filter((el) => el.getAttribute('aria-disabled') !== 'true');
+
+        const wantedKey = normalizeText(wanted);
+        const exact = options.find((el) => {
+          const key = normalizeText(el.textContent || '');
+          return key === wantedKey || key.includes(wantedKey) || wantedKey.includes(key);
+        });
+        if (exact) return exact;
+        if (options.length === 1) return options[0];
+        return null;
+      }, 3200, 100);
+
+      if (!optionEl) {
+        document.body.click();
+        return false;
+      }
+
+      optionEl.scrollIntoView({ block: 'nearest' });
+      const clickTarget = optionEl.querySelector('.select2-result-label') || optionEl;
+      clickTarget.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      clickTarget.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      await sleep(40);
+      clickTarget.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+      clickTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      await sleep(420);
+
+      if (!multiple) break;
+    }
+
+    await sleep(260);
+    const selectedValues = getSelectedValues(select);
+    if (multiple) {
+      if (resolvedValues.length && resolvedValues.every((value) => selectedValues.includes(value))) return true;
+    } else {
+      if (resolvedValues[0] && (selectedValues[0] === resolvedValues[0] || String(select.value) === resolvedValues[0])) return true;
+    }
+
+    return syncSelectValueNow(select, desired, multiple);
+  }
+  async function populateSelectRobust(select, desiredValues, multiple = false) {
+    if (!select) return false;
+    const desired = getFallbackDesiredValues(select, desiredValues);
+    if (!desired.length) return true;
+
+    initializeSelect2IfNeeded(select);
+
+    for (let attempt = 0; attempt < CONFIG.selectRetryCount; attempt += 1) {
+      const resolvedValues = getResolvedOptionValues(select, desired);
+      if (!resolvedValues.length) {
+        await sleep(320);
+        continue;
+      }
+
+      const directOk = await syncSelectValueStable(select, desired, multiple);
+      if (directOk) return true;
+
+      const pluginOk = await setSelectValueViaPluginApi(select, desired, multiple);
+      if (pluginOk) return true;
+
+      if (attempt >= Math.max(1, CONFIG.selectRetryCount - 2)) {
+        const clickedOk = await clickSelect2OptionByText(select, desired, multiple);
+        if (clickedOk) return true;
+
+        const select2Ok = await selectValuesViaSelect2(select, desired, multiple);
+        if (select2Ok) return true;
+      }
+
+      await sleep(320);
+    }
+
+    return false;
+  }
+
+  function hasAnyConcreteOption(select) {
+    return Array.from(select?.options || []).some((option) => String(option.value || '').trim());
+  }
+
+  function hasExpectedOptions(select, expectedValues) {
+    if (!select) return false;
+    const expected = (expectedValues || []).filter(Boolean);
+    if (!expected.length) return hasAnyConcreteOption(select) || !select.multiple;
+    const resolved = getResolvedOptionValues(select, expected);
+    return resolved.length >= expected.length;
+  }
+
+  async function waitForSelectOptions(select, expectedValues, timeoutMs = CONFIG.selectPopulateTimeoutMs) {
+    if (!select) return null;
+    initializeSelect2IfNeeded(select);
+
+    return waitFor(() => {
+      if (!select || select.disabled) return null;
+      if (!hasAnyConcreteOption(select)) return null;
+      if (!(expectedValues || []).filter(Boolean).length) return select;
+      return hasExpectedOptions(select, expectedValues) ? select : null;
+    }, timeoutMs, 140);
+  }
+
+  async function waitForStableConcreteOptions(select, expectedValues = [], timeoutMs = 5000, stableMs = 600) {
+    if (!select) return null;
+    const started = Date.now();
+    let lastSignature = '';
+    let stableSince = 0;
+    while (Date.now() - started < timeoutMs) {
+      const options = Array.from(select.options || []).filter((option) => String(option.value || '').trim());
+      const signature = options.map((option) => `${option.value}::${option.textContent || ''}`).join('||');
+      const hasExpected = !(expectedValues || []).filter(Boolean).length || hasExpectedOptions(select, expectedValues);
+      if (options.length && hasExpected) {
+        if (signature !== lastSignature) {
+          lastSignature = signature;
+          stableSince = Date.now();
+        } else if (stableSince && (Date.now() - stableSince) >= stableMs) {
+          return select;
+        }
+      } else {
+        lastSignature = '';
+        stableSince = 0;
+      }
+      await sleep(120);
+    }
+    return null;
+  }
+
+
+  function getSelectDebugSnapshot(select) {
+    if (!select) return { exists: false };
+    const options = Array.from(select.options || []).map((option) => ({
+      value: String(option.value || ''),
+      text: String(option.textContent || '').trim(),
+      selected: !!option.selected
+    }));
+    return {
+      exists: true,
+      id: select.id || null,
+      name: select.name || null,
+      disabled: !!select.disabled,
+      multiple: !!select.multiple,
+      optionCount: options.length,
+      options: options.slice(0, 30),
+      selectedValues: getSelectedValues(select),
+      rawValue: select.value
+    };
+  }
+
+  function logSelectSnapshot(state, label, select, desiredValues = [], context = {}) {
+    appendLog(state, label, {
+      ...context,
+      desiredValues,
+      snapshot: getSelectDebugSnapshot(select)
+    });
+  }
+
+  async function directSelectAndVerify(state, label, select, desiredValues, multiple = false, context = {}) {
+    const desired = getFallbackDesiredValues(select, desiredValues);
+    logSelectSnapshot(state, `${label} - antes da seleção`, select, desired, context);
+
+    if (!desired.length) {
+      appendLog(state, `${label} - nenhum valor desejado; seguindo sem seleção.`, context);
+      return true;
+    }
+
+    const directOk = await syncSelectValueStable(select, desired, multiple);
+    logSelectSnapshot(state, `${label} - após syncSelectValueStable (${directOk ? 'ok' : 'falhou'})`, select, desired, context);
+    if (directOk) return true;
+
+    const pluginOk = await setSelectValueViaPluginApi(select, desired, multiple);
+    logSelectSnapshot(state, `${label} - após setSelectValueViaPluginApi (${pluginOk ? 'ok' : 'falhou'})`, select, desired, context);
+    if (pluginOk) return true;
+
+    const nowOk = syncSelectValueNow(select, desired, multiple);
+    logSelectSnapshot(state, `${label} - após syncSelectValueNow (${nowOk ? 'ok' : 'falhou'})`, select, desired, context);
+    if (nowOk) return true;
+
+    appendLog(state, `${label} - seleção direta falhou; tentando clique visual como último recurso.`, context);
+    const clickedOk = await clickSelect2OptionByText(select, desired, multiple) || await selectValuesViaSelect2(select, desired, multiple);
+    logSelectSnapshot(state, `${label} - após clique visual (${clickedOk ? 'ok' : 'falhou'})`, select, desired, context);
+    return clickedOk;
+  }
+
+  async function ensureSelectHasExpectedOptions(state, select, expectedValues, fallbackValues, label, context = {}) {
+    if (!select) return null;
+
+    let readySelect = await waitForSelectOptions(select, expectedValues, CONFIG.selectPopulateTimeoutMs);
+    if (readySelect) return readySelect;
+
+    if ((fallbackValues || []).length) {
+      appendLog(state, `Fallback: reconstruindo opções de ${label}.`, {
+        ...context,
+        fallbackCount: fallbackValues.length
+      });
+      rebuildSelectOptions(select, fallbackValues);
+      await sleep(180);
+      readySelect = await waitForSelectOptions(select, expectedValues, 2200);
+      if (readySelect) return readySelect;
+    }
+
+    return select;
+  }
+
+  function setTextareaValue(textarea, value) {
+    if (!textarea) return;
+    textarea.value = value;
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function getVisibleStructuredBlocks(row) {
+    return qsa('.nested-fields', row).filter((el) => {
+      if (el.style.display === 'none') return false;
+      if (el.hidden) return false;
+      const destroyInput = qs('input[name$="[_destroy]"]', el);
+      return !destroyInput || destroyInput.value !== 'true';
+    });
+  }
+
+  async function waitFor(predicate, timeoutMs = 5000, intervalMs = 100) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const result = predicate();
+      if (result) return result;
+      await sleep(intervalMs);
+    }
+    return null;
+  }
+
+  async function ensureStructuredBlock(row) {
+    let blocks = getVisibleStructuredBlocks(row);
+    if (blocks.length) {
+      initializeSelectsInRoot(blocks[blocks.length - 1]);
+      return blocks[blocks.length - 1];
+    }
+
+    const addButton = qs('.add_fields', row);
+    if (!addButton) {
+      throw new Error('Botão "Adicionar currículo estruturado" não encontrado.');
+    }
+
+    addButton.click();
+    blocks = await waitFor(() => getVisibleStructuredBlocks(row), 5000, 100);
+    if (!blocks || !blocks.length) {
+      throw new Error('Não foi possível criar o bloco de currículo estruturado.');
+    }
+
+    const block = blocks[blocks.length - 1];
+    await sleep(180);
+    initializeSelectsInRoot(block);
+    return block;
+  }
+
+  function getAbilityFromState(state, abilityValue) {
+    return (state.abilities || []).find((ability) => String(ability.value) === String(abilityValue)) || null;
+  }
+
+  async function applyInstructionToRow(state, rowElement, instruction) {
+    if (instruction.kind !== 'science') {
+      const textarea = qs('textarea', rowElement);
+      if (textarea && instruction.manualText) {
+        setTextareaValue(textarea, instruction.manualText);
+      }
+      return;
+    }
+
+    const block = await ensureStructuredBlock(rowElement);
+    initializeSelectsInRoot(block);
+    const ability = getAbilityFromState(state, instruction.abilityValue);
+
+    const evaluationSelect = qs('.structured-weekly-plan-evaluation-select', block);
+    const abilitySelect = qs('.structured-weekly-plan-id-select', block);
+    let knowledgeSelect = qs('.structured-weekly-plan-knowledges-select', block);
+    let methodologySelect = qs('.structured-weekly-plan-methodologies-select', block);
+
+    if (!abilitySelect) {
+      throw new Error('Select de habilidade não encontrado.');
+    }
+
+    let targetAbilityOption = Array.from(abilitySelect.options).find((option) => String(option.value) === String(instruction.abilityValue));
+    if (!targetAbilityOption) {
+      targetAbilityOption = new Option(instruction.abilityLabel, instruction.abilityValue, false, false);
+      setStructuredAbilityOptionData(targetAbilityOption, ability);
+      abilitySelect.add(targetAbilityOption);
+    } else {
+      setStructuredAbilityOptionData(targetAbilityOption, ability);
+    }
+
+    const abilitySelected = await populateSelectRobust(abilitySelect, [String(instruction.abilityValue)], false);
+    if (!abilitySelected) {
+      throw new Error(`Não foi possível selecionar a habilidade ${instruction.abilityLabel}.`);
+    }
+
+    await sleep(CONFIG.afterAbilityDelayMs);
+
+    knowledgeSelect = await waitFor(() => qs('.structured-weekly-plan-knowledges-select', block), 2500, 100) || knowledgeSelect;
+    methodologySelect = await waitFor(() => qs('.structured-weekly-plan-methodologies-select', block), 2500, 100) || methodologySelect;
+
+    if (knowledgeSelect && !hasAnyConcreteOption(knowledgeSelect) && (ability?.knowledges || []).length) {
+      forcePopulateDependentSelects(block, ability);
+      knowledgeSelect = qs('.structured-weekly-plan-knowledges-select', block) || knowledgeSelect;
+    }
+    if (!instruction.evaluation && methodologySelect && !hasAnyConcreteOption(methodologySelect) && (ability?.methodologies || []).length) {
+      forcePopulateDependentSelects(block, ability);
+      methodologySelect = qs('.structured-weekly-plan-methodologies-select', block) || methodologySelect;
+    }
+
+    const selectedKnowledges = getFallbackDesiredValues(knowledgeSelect, instruction.knowledge ? [instruction.knowledge] : []);
+    const selectedMethodologies = getFallbackDesiredValues(methodologySelect, instruction.methodologies || []);
+    const fallbackKnowledges = ability?.knowledges || selectedKnowledges;
+    const fallbackMethodologies = ability?.methodologies || selectedMethodologies;
+
+    if (selectedKnowledges.length && knowledgeSelect) {
+      let loadedKnowledgeSelect = await ensureSelectHasExpectedOptions(
+        state,
+        knowledgeSelect,
+        selectedKnowledges,
+        fallbackKnowledges,
+        'Objeto de conhecimento',
+        {
+          week: getCurrentWeekFromForm(),
+          rowIndex: instruction.rowIndex,
+          ability: instruction.abilityLabel
+        }
+      );
+
+      await sleep(CONFIG.afterKnowledgeDelayMs);
+      const desiredKnowledgeValues = getFallbackDesiredValues(loadedKnowledgeSelect, selectedKnowledges);
+      await waitForStableConcreteOptions(loadedKnowledgeSelect, desiredKnowledgeValues, 5000, 1000);
+      logSelectSnapshot(state, 'Objeto de conhecimento - opções estabilizadas', loadedKnowledgeSelect, desiredKnowledgeValues, {
+        week: getCurrentWeekFromForm(),
+        rowIndex: instruction.rowIndex,
+        ability: instruction.abilityLabel
+      });
+
+      let knowledgeSelected = await directSelectAndVerify(
+        state,
+        'Objeto de conhecimento',
+        loadedKnowledgeSelect,
+        desiredKnowledgeValues,
+        true,
+        { week: getCurrentWeekFromForm(), rowIndex: instruction.rowIndex, ability: instruction.abilityLabel }
+      );
+
+      if (!knowledgeSelected) {
+        appendLog(state, 'Objeto de conhecimento - fallback: reconstruindo opções do campo.', {
+          week: getCurrentWeekFromForm(),
+          rowIndex: instruction.rowIndex,
+          fallbackKnowledges
+        });
+        rebuildSelectOptions(loadedKnowledgeSelect, fallbackKnowledges);
+        await sleep(500);
+        await waitForStableConcreteOptions(loadedKnowledgeSelect, desiredKnowledgeValues, 2500, 500);
+        knowledgeSelected = await directSelectAndVerify(
+          state,
+          'Objeto de conhecimento (após rebuild)',
+          loadedKnowledgeSelect,
+          desiredKnowledgeValues,
+          true,
+          { week: getCurrentWeekFromForm(), rowIndex: instruction.rowIndex, ability: instruction.abilityLabel }
+        );
+      }
+
+      if (!knowledgeSelected) {
+        appendLog(state, 'Falha ao selecionar objeto de conhecimento.', {
+          week: getCurrentWeekFromForm(),
+          rowIndex: instruction.rowIndex,
+          selectedKnowledges,
+          availableOptions: Array.from((loadedKnowledgeSelect?.options || [])).map((option) => option.textContent || option.value)
+        });
+        throw new Error(`Objeto de conhecimento não selecionado na semana ${getCurrentWeekFromForm()} linha ${instruction.rowIndex + 1}.`);
+      }
+    }
+
+    if (!instruction.evaluation && selectedMethodologies.length && methodologySelect) {
+      let loadedMethodologySelect = await ensureSelectHasExpectedOptions(
+        state,
+        methodologySelect,
+        selectedMethodologies,
+        fallbackMethodologies,
+        'Metodologias',
+        {
+          week: getCurrentWeekFromForm(),
+          rowIndex: instruction.rowIndex,
+          ability: instruction.abilityLabel
+        }
+      );
+
+      await sleep(CONFIG.afterMethodologyDelayMs);
+      const desiredMethodologyValues = getFallbackDesiredValues(loadedMethodologySelect, selectedMethodologies);
+      await waitForStableConcreteOptions(loadedMethodologySelect, desiredMethodologyValues, 5000, 1000);
+      logSelectSnapshot(state, 'Metodologias - opções estabilizadas', loadedMethodologySelect, desiredMethodologyValues, {
+        week: getCurrentWeekFromForm(),
+        rowIndex: instruction.rowIndex,
+        ability: instruction.abilityLabel
+      });
+
+      let methodologySelected = await directSelectAndVerify(
+        state,
+        'Metodologias',
+        loadedMethodologySelect,
+        desiredMethodologyValues,
+        true,
+        { week: getCurrentWeekFromForm(), rowIndex: instruction.rowIndex, ability: instruction.abilityLabel }
+      );
+
+      if (!methodologySelected) {
+        appendLog(state, 'Metodologias - fallback: reconstruindo opções do campo.', {
+          week: getCurrentWeekFromForm(),
+          rowIndex: instruction.rowIndex,
+          fallbackMethodologies
+        });
+        rebuildSelectOptions(loadedMethodologySelect, fallbackMethodologies);
+        loadedMethodologySelect.disabled = false;
+        await sleep(500);
+        await waitForStableConcreteOptions(loadedMethodologySelect, desiredMethodologyValues, 2500, 500);
+        methodologySelected = await directSelectAndVerify(
+          state,
+          'Metodologias (após rebuild)',
+          loadedMethodologySelect,
+          desiredMethodologyValues,
+          true,
+          { week: getCurrentWeekFromForm(), rowIndex: instruction.rowIndex, ability: instruction.abilityLabel }
+        );
+      }
+
+      if (!methodologySelected) {
+        appendLog(state, 'Falha ao selecionar metodologias.', {
+          week: getCurrentWeekFromForm(),
+          rowIndex: instruction.rowIndex,
+          selectedMethodologies,
+          availableOptions: Array.from((loadedMethodologySelect?.options || [])).map((option) => option.textContent || option.value)
+        });
+        throw new Error(`Metodologias não selecionadas na semana ${getCurrentWeekFromForm()} linha ${instruction.rowIndex + 1}.`);
+      }
+    }
+
+    if (evaluationSelect) {
+      evaluationSelect.value = instruction.evaluation ? 'true' : 'false';
+      evaluationSelect.dispatchEvent(new Event('input', { bubbles: true }));
+      evaluationSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
+
+  function getWeekPlanForCurrentPage(state) {
+    const currentWeek = getCurrentWeekFromForm();
+    if (currentWeek == null) return null;
+    return state.executionPlan?.[String(currentWeek)] || null;
+  }
+
+  async function handleScanPage(state) {
+    const currentWeek = getCurrentWeekFromForm();
+    const expectedWeek = state.weeks[state.scanIndex]?.week;
+    if (currentWeek !== expectedWeek) {
+      appendLog(state, 'Semana aberta não corresponde à esperada no escaneamento.', { currentWeek, expectedWeek });
+      saveState(state);
+      return;
+    }
+
+    const summary = parseCurrentWeekSummary();
+    state.summaries[String(summary.week)] = summary;
+    if ((!state.abilities || !state.abilities.length)) {
+      const abilities = await extractAbilitiesFromPage(state);
+      if (abilities.length) {
+        state.abilities = abilities;
+        appendLog(state, 'Habilidades capturadas na primeira semana com Ciências/Biologia.', {
+          count: state.abilities.length
+        });
+      } else if (summary.abilities?.length) {
+        // fallback antigo (template) - pode vir sem knowledges/methodologies dependendo do encoding
+        state.abilities = summary.abilities;
+        appendLog(state, 'Habilidades capturadas via template (fallback).', {
+          count: state.abilities.length
+        });
+      }
+    }
+
+    appendLog(state, 'Semana mapeada.', {
+      week: summary.week,
+      scienceRows: summary.scienceRows,
+      practiceRows: summary.practiceRows,
+      manualRows: summary.manualRows || 0
+    });
+    saveState(state);
+
+    await sleep(CONFIG.scanDelayMs);
+
+    state.scanIndex += 1;
+    if (state.scanIndex < state.weeks.length) {
+      saveState(state);
+      location.href = state.weeks[state.scanIndex].url;
+      return;
+    }
+
+    state.status = 'applying';
+    state.applyIndex = 0;
+    state.waitingReturn = false;
+    buildExecutionPlan(state);
+    saveState(state);
+
+    await sleep(CONFIG.navigationDelayMs);
+    if (state.weeks.length) {
+      location.href = state.weeks[0].url;
+    }
+  }
+
+  async function handleApplyPage(state) {
+    const currentWeek = getCurrentWeekFromForm();
+    const expectedWeek = state.weeks[state.applyIndex]?.week;
+    if (currentWeek !== expectedWeek) {
+      appendLog(state, 'Semana aberta não corresponde à esperada na aplicação.', { currentWeek, expectedWeek });
+      saveState(state);
+      return;
+    }
+
+    const plan = getWeekPlanForCurrentPage(state);
+    if (!plan) {
+      appendLog(state, 'Nenhum plano calculado para a semana atual.');
+      state.waitingReturn = true;
+      state.lastAppliedWeek = currentWeek;
+      saveState(state);
+      history.back();
+      return;
+    }
+
+    const rows = qsa('#weekly_plan tr.by-curriculum-discipline');
+    appendLog(state, 'Aplicando semana.', { week: currentWeek, instructions: plan.instructions.length });
+    saveState(state);
+
+    for (const instruction of plan.instructions) {
+      const rowElement = rows[instruction.rowIndex];
+      if (!rowElement) {
+        appendLog(state, 'Linha não encontrada para instrução.', instruction);
+        continue;
+      }
+
+      try {
+        await applyInstructionToRow(state, rowElement, instruction);
+        await sleep(CONFIG.applyDelayMs);
+      } catch (error) {
+        appendLog(state, `Falha ao aplicar instrução na semana ${currentWeek}.`, {
+          instruction,
+          error: error.message
+        });
+        saveState(state);
+        throw error;
+      }
+    }
+
+    state.waitingReturn = true;
+    state.lastAppliedWeek = currentWeek;
+    appendLog(state, 'Semana preenchida. Enviando formulário.', { week: currentWeek });
+    saveState(state);
+
+    await sleep(CONFIG.saveDelayMs);
+
+    const saveButton = qs('input[type="submit"][value="Salvar"], input[name="commit"][value="Salvar"]');
+    if (!saveButton) {
+      throw new Error('Botão Salvar não encontrado.');
+    }
+    saveButton.click();
+  }
+
+  function continueFromWeeksPage(state) {
+    if (state.status === 'done') return;
+    if (!state.waitingReturn) return;
+
+    const lastWeek = Number(state.lastAppliedWeek);
+    const currentIndex = state.weeks.findIndex((item) => item.week === lastWeek);
+    const nextIndex = currentIndex + 1;
+
+    state.waitingReturn = false;
+    state.applyIndex = nextIndex;
+    saveState(state);
+
+    if (nextIndex >= state.weeks.length) {
+      state.status = 'done';
+      state.finishedAt = new Date().toISOString();
+      appendLog(state, 'Processo concluído.');
+      saveState(state);
+      localStorage.setItem(REPORT_WINDOW_KEY, '1');
+      renderPanel();
+      openReportModal(state);
+      return;
+    }
+
+    location.href = state.weeks[nextIndex].url;
+  }
+
+  function resumeAutomation(state) {
+    if (!state || state.status === 'done') return;
+
+    if (isWeekFormPage()) {
+      renderPanel();
+      return;
+    }
+
+    if (!isWeeksPage()) {
+      alert('Abra a página de semanas da turma para continuar a automação.');
+      return;
+    }
+
+    if (state.status === 'scanning') {
+      const nextWeek = state.weeks[state.scanIndex];
+      if (!nextWeek) {
+        buildExecutionPlan(state);
+        state.status = 'applying';
+        state.applyIndex = 0;
+        state.waitingReturn = false;
+        saveState(state);
+        if (state.weeks.length) location.href = state.weeks[0].url;
+        return;
+      }
+      saveState(state);
+      location.href = nextWeek.url;
+      return;
+    }
+
+    if (state.status === 'applying') {
+      if (state.waitingReturn) {
+        continueFromWeeksPage(state);
+        return;
+      }
+
+      const nextWeek = state.weeks[state.applyIndex];
+      if (!nextWeek) {
+        state.status = 'done';
+        state.finishedAt = new Date().toISOString();
+        appendLog(state, 'Processo concluído na retomada.');
+        saveState(state);
+        localStorage.setItem(REPORT_WINDOW_KEY, '1');
+        renderPanel();
+        openReportModal(state);
+        return;
+      }
+
+      saveState(state);
+      location.href = nextWeek.url;
+    }
+  }
+
+
+  function buildStateFromCurrentWeeksPage() {
+    const parsedWeeks = parseWeeksTable();
+    const weeks = CONFIG.maxWeeksPerRun ? parsedWeeks.slice(0, CONFIG.maxWeeksPerRun) : parsedWeeks;
+    const classroomId = getCurrentClassroomId() || getUrl(weeks[0]?.url || '')?.searchParams.get('classroom_id') || null;
+
+    return {
+      version: 1,
+      status: 'scanning',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      classroomId,
+      weeks,
+      scanIndex: 0,
+      applyIndex: 0,
+      waitingReturn: false,
+      lastAppliedWeek: null,
+      summaries: {},
+      abilities: [],
+      executionPlan: {},
+      reportRows: [],
+      computed: {},
+      logs: []
+    };
+  }
+
+  function escapeHtml(text) {
+    return String(text || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function getSummaryText(state) {
+    if (!state) return 'Nenhuma automação em andamento.';
+
+    if (state.status === 'scanning') {
+      return `Mapeando semanas ${state.scanIndex}/${state.weeks.length}`;
+    }
+    if (state.status === 'applying') {
+      return `Aplicando preenchimento ${state.applyIndex}/${state.weeks.length}`;
+    }
+    if (state.status === 'done') {
+      return `Concluído. Semanas processadas: ${state.weeks.length}`;
+    }
+    return `Estado: ${state.status}`;
+  }
+
+  function ensurePanelStyles() {
+    if (qs('#vm-plano-semanal-style')) return;
+    const style = document.createElement('style');
+    style.id = 'vm-plano-semanal-style';
+    style.textContent = `
+      #${CONFIG.panelId} {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        width: 360px;
+        z-index: 999999;
+        background: #ffffff;
+        border: 1px solid #d9e2ec;
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,.15);
+        font-family: Arial, sans-serif;
+        color: #243b53;
+      }
+      #${CONFIG.panelId} .vm-head {
+        background: #0b5e96;
+        color: white;
+        padding: 12px 14px;
+        border-radius: 12px 12px 0 0;
+        font-weight: bold;
+        font-size: 14px;
+      }
+      #${CONFIG.panelId} .vm-body {
+        padding: 12px 14px;
+        font-size: 13px;
+      }
+      #${CONFIG.panelId} .vm-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      #${CONFIG.panelId} button {
+        border: 0;
+        border-radius: 8px;
+        padding: 8px 10px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      #${CONFIG.panelId} .vm-primary { background: #0b5e96; color: white; }
+      #${CONFIG.panelId} .vm-secondary { background: #e6eef5; color: #102a43; }
+      #${CONFIG.panelId} .vm-danger { background: #d64545; color: white; }
+      #${CONFIG.panelId} .vm-muted {
+        margin-top: 8px;
+        color: #627d98;
+        max-height: 120px;
+        overflow: auto;
+        background: #f7fafc;
+        border-radius: 8px;
+        padding: 8px;
+      }
+      #${CONFIG.modalId} {
+        position: fixed;
+        inset: 0;
+        z-index: 9999999;
+        background: rgba(16, 42, 67, .55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #${CONFIG.modalId} .vm-modal-box {
+        width: min(1200px, 94vw);
+        max-height: 88vh;
+        overflow: auto;
+        background: white;
+        border-radius: 14px;
+        padding: 16px;
+        box-shadow: 0 20px 50px rgba(0,0,0,.25);
+        font-family: Arial, sans-serif;
+      }
+      #${CONFIG.modalId} table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      #${CONFIG.modalId} th, #${CONFIG.modalId} td {
+        border: 1px solid #d9e2ec;
+        padding: 6px;
+        vertical-align: top;
+      }
+      #${CONFIG.modalId} th {
+        position: sticky;
+        top: 0;
+        background: #f0f4f8;
+      }
+      #${CONFIG.modalId} .vm-modal-actions {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function renderPanel() {
+    ensurePanelStyles();
+
+    let panel = qs(`#${CONFIG.panelId}`);
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = CONFIG.panelId;
+      document.body.appendChild(panel);
+    }
+
+    const state = loadState();
+    const logs = (state?.logs || []).slice(-CONFIG.panelLogCount).reverse();
+    const canStart = isWeeksPage() && !state;
+    const canResume = isWeeksPage() && !!state && state.status !== 'done';
+    const canShowReport = !!state?.reportRows?.length;
+
+    panel.innerHTML = `
+      <div class="vm-head">Plano semanal automático</div>
+      <div class="vm-body">
+        <div><strong>Página:</strong> ${escapeHtml(isClassroomsPage() ? 'Turmas' : isWeeksPage() ? 'Semanas' : isWeekFormPage() ? 'Formulário da semana' : 'Outra')}</div>
+        <div style="margin-top:6px;"><strong>Status:</strong> ${escapeHtml(getSummaryText(state))}</div>
+        <div style="margin-top:6px;"><strong>Modo:</strong> Execução completa com retomada automática.</div>${state?.computed ? `<div style="margin-top:6px;"><strong>Cálculo:</strong> ${escapeHtml(`H=${state.computed.abilityCount || 0}, semanas com Ciências/Biologia=${state.computed.mappedScienceWeeks || 0}`)}</div>` : ''}
+        <div class="vm-actions">
+          ${canStart ? '<button class="vm-primary" data-vm-action="start">Mapear e preencher</button>' : ''}
+          ${canResume ? '<button class="vm-primary" data-vm-action="resume">Continuar de onde parou</button>' : ''}
+          ${canShowReport ? '<button class="vm-secondary" data-vm-action="report">Ver relatório</button>' : ''}
+          ${state ? '<button class="vm-secondary" data-vm-action="refresh">Atualizar painel</button>' : ''}
+          ${state ? '<button class="vm-danger" data-vm-action="stop">Parar e limpar</button>' : ''}
+        </div>
+        <div class="vm-muted">
+          ${logs.length ? logs.map((log) => `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #d9e2ec;"><strong>${escapeHtml(new Date(log.at).toLocaleString('pt-BR'))}</strong><br>${escapeHtml(log.message)}${log.extra ? `<pre style="white-space:pre-wrap;max-height:180px;overflow:auto;background:#f7fafc;border:1px solid #d9e2ec;border-radius:6px;padding:6px;margin-top:6px;font-size:11px;">${escapeHtml(JSON.stringify(log.extra, null, 2))}</pre>` : ''}</div>`).join('') : 'Sem logs ainda.'}
+        </div>
+      </div>
+    `;
+
+    panel.onclick = async (event) => {
+      const button = event.target.closest('button[data-vm-action]');
+      if (!button) return;
+      const action = button.getAttribute('data-vm-action');
+
+      if (action === 'start') {
+        const newState = buildStateFromCurrentWeeksPage();
+        if (!newState.weeks.length) {
+          alert('Nenhuma semana foi encontrada nesta página.');
+          return;
+        }
+        appendLog(newState, 'Automação iniciada.');
+        saveState(newState);
+        renderPanel();
+        location.href = newState.weeks[0].url;
+        return;
+      }
+
+      if (action === 'resume') {
+        const currentState = loadState();
+        if (currentState) resumeAutomation(currentState);
+        return;
+      }
+
+      if (action === 'report') {
+        const currentState = loadState();
+        if (currentState) openReportModal(currentState);
+        return;
+      }
+
+      if (action === 'refresh') {
+        renderPanel();
+        return;
+      }
+
+      if (action === 'stop') {
+        const confirmClear = confirm('Deseja parar a automação e limpar o estado salvo?');
+        if (!confirmClear) return;
+        clearState();
+        renderPanel();
+        alert('Estado da automação removido.');
+      }
+    };
+  }
+
+  function openReportModal(state) {
+    if (!state?.reportRows?.length) {
+      alert('Ainda não há relatório disponível.');
+      return;
+    }
+
+    const oldModal = qs(`#${CONFIG.modalId}`);
+    if (oldModal) oldModal.remove();
+
+    const modal = document.createElement('div');
+    modal.id = CONFIG.modalId;
+
+    const rowsHtml = state.reportRows.map((row) => `
+      <tr>
+        <td>${escapeHtml(row.week)}</td>
+        <td>${escapeHtml(row.date)}</td>
+        <td>${escapeHtml(row.discipline)}</td>
+        <td>${escapeHtml(row.kind)}</td>
+        <td>${escapeHtml(row.ability)}</td>
+        <td>${escapeHtml(row.knowledge)}</td>
+        <td>${escapeHtml(row.methodologies)}</td>
+        <td>${escapeHtml(row.evaluation)}</td>
+        <td>${escapeHtml(row.manualText)}</td>
+      </tr>
+    `).join('');
+
+    modal.innerHTML = `
+      <div class="vm-modal-box">
+        <div class="vm-modal-actions">
+          <button class="vm-primary" data-vm-modal-action="download-json">Baixar JSON</button>
+          <button class="vm-secondary" data-vm-modal-action="download-csv">Baixar CSV</button>
+          <button class="vm-danger" data-vm-modal-action="close">Fechar</button>
+        </div>
+        <h3 style="margin: 0 0 12px 0;">Relatório final do preenchimento</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Semana</th>
+              <th>Data</th>
+              <th>Disciplina</th>
+              <th>Tipo</th>
+              <th>Habilidade</th>
+              <th>Objeto de conhecimento</th>
+              <th>Metodologias</th>
+              <th>Avaliação</th>
+              <th>Conteúdo manual</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    modal.addEventListener('click', (event) => {
+      if (event.target === modal) modal.remove();
+    });
+
+    modal.querySelector('[data-vm-modal-action="close"]').addEventListener('click', () => modal.remove());
+    modal.querySelector('[data-vm-modal-action="download-json"]').addEventListener('click', () => {
+      downloadTextFile(
+        `plano-semanal-relatorio-${new Date().toISOString().slice(0, 10)}.json`,
+        JSON.stringify(state.reportRows, null, 2),
+        'application/json'
+      );
+    });
+    modal.querySelector('[data-vm-modal-action="download-csv"]').addEventListener('click', () => {
+      const header = ['Semana', 'Data', 'Disciplina', 'Tipo', 'Habilidade', 'Objeto', 'Metodologias', 'Avaliação', 'Conteúdo manual'];
+      const lines = [header.join(';')].concat(
+        state.reportRows.map((row) => [
+          row.week,
+          row.date,
+          row.discipline,
+          row.kind,
+          row.ability,
+          row.knowledge,
+          row.methodologies,
+          row.evaluation,
+          row.manualText
+        ].map((cell) => `"${String(cell || '').replace(/"/g, '""')}"`).join(';'))
+      );
+      downloadTextFile(
+        `plano-semanal-relatorio-${new Date().toISOString().slice(0, 10)}.csv`,
+        lines.join('\n'),
+        'text/csv;charset=utf-8'
+      );
+    });
+
+    document.body.appendChild(modal);
+  }
+
+  function downloadTextFile(filename, content, contentType) {
+    const blob = new Blob([content], { type: contentType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function bootstrapAutomation() {
+    renderPanel();
+
+    const state = loadState();
+    if (!state) return;
+
+    if (localStorage.getItem(REPORT_WINDOW_KEY) === '1' && isWeeksPage() && state.status === 'done') {
+      localStorage.removeItem(REPORT_WINDOW_KEY);
+      openReportModal(state);
+    }
+
+    try {
+      if (state.status === 'scanning' && isWeekFormPage()) {
+        await handleScanPage(state);
+        return;
+      }
+
+      if (state.status === 'applying' && isWeekFormPage()) {
+        await handleApplyPage(state);
+        return;
+      }
+
+      if (state.status === 'applying' && isWeeksPage()) {
+        continueFromWeeksPage(state);
+      }
+    } catch (error) {
+      appendLog(state, 'Automação interrompida por erro.', { error: error.message });
+      saveState(state);
+      renderPanel();
+      alert(`A automação foi interrompida: ${error.message}`);
+      throw error;
+    }
+  }
+
+  bootstrapAutomation();
+})();
