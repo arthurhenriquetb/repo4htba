@@ -2018,7 +2018,13 @@
     
         const url = getUrl(location.href);
         const week = url?.searchParams.get('week');
-        return week ? Number(week) : null;
+        if(week)return Number(week);
+        const saved=loadState();
+        const matching=(saved?.weeks||[]).filter(item=>{
+          const known=getUrl(item.url);
+          return known && known.pathname===location.pathname;
+        });
+        return matching.length===1?Number(matching[0].week):null;
       }
     
       function getCurrentClassroomId() {
@@ -3247,8 +3253,7 @@
           throw Error('Turma diferente da esperada; execução interrompida.');
         const expectedWeek = state.weeks[state.scanIndex]?.week;
         if (currentWeek !== expectedWeek) {
-          appendLog(state, 'Semana aberta não corresponde à esperada no escaneamento.', { currentWeek, expectedWeek });
-          saveState(state);
+          pausePlan(state,'Semana diferente da prevista no mapeamento.',{currentWeek,expectedWeek});
           return;
         }
     
@@ -3409,8 +3414,7 @@
           throw Error('Turma diferente da esperada; execução interrompida.');
         const expectedWeek = (state.applyWeeks || state.weeks)[state.applyIndex]?.week;
         if (currentWeek !== expectedWeek) {
-          appendLog(state, 'Semana aberta não corresponde à esperada na aplicação.', { currentWeek, expectedWeek });
-          saveState(state);
+          pausePlan(state,'Semana diferente da aprovada. Preenchimento interrompido.',{currentWeek,expectedWeek});
           return;
         }
     
@@ -3471,6 +3475,12 @@
           throw new Error('Botão Salvar não encontrado.');
         }
         saveButton.click();
+        // Se houver erro de validação, um modal ou falha de AJAX, parar aqui.
+        await sleep(7500);
+        const pending=loadState();
+        if(pending?.status==='saving' && Number(pending.lastAppliedWeek)===Number(currentWeek))
+          pausePlan(pending,'O salvamento não foi confirmado. '+
+            (isSegesFormError()||'Consulte a mensagem exibida pelo SEGES.'));
       }
     
       async function continueFromWeeksPage(state) {
