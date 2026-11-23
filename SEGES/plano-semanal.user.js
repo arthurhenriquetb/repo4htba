@@ -1961,7 +1961,11 @@ function openWeekSelectionModal() {
     if(!url)throw Error('Acesso negado: endereço externo ou inválido.');
     const response=await fetch(url.href,{credentials:'same-origin',cache:'no-store'});
     const redirected=safeSegesUrl(response.url);
-    if(!response.ok||!redirected)throw Error('Página indisponível ou sessão encerrada (HTTP '+response.status+').');
+    if(!response.ok||!redirected || redirected.pathname!==url.pathname ||
+      (url.searchParams.has('classroom_id') &&
+        redirected.searchParams.get('classroom_id')!==url.searchParams.get('classroom_id'))) {
+      throw Error('Página indisponível, redirecionamento inesperado ou sessão encerrada (HTTP '+response.status+').');
+    }
     const html=await response.text();
     return new DOMParser().parseFromString(html,'text/html');
   }
@@ -2018,7 +2022,8 @@ function openWeekSelectionModal() {
   async function confirmDeletionFromList(week) {
     const doc=await readSegesHtml(week.classUrl);
     const remaining=listExistingWeeks(doc,{id:week.classId,name:week.className,url:week.classUrl});
-    if(!qsa('table.table.table-striped',doc).length)return false;
+    // Nunca concluir sucesso usando uma página que não seja a lista de semanas.
+    if(!qsa('table.table.table-striped tbody tr.middle a.btn.btn-sm.btn-primary',doc).length)return false;
     return !remaining.some((item)=>item.recordId===week.recordId && item.week===week.week);
   }
 
