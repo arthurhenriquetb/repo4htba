@@ -44,6 +44,8 @@ Versão original preservada em [SEGES/arquivo/validacao-automatica-v6.1-original
 
 **Instalar:** [SEGES/plano-semanal.user.js](SEGES/plano-semanal.user.js)
 
+**Ao atualizar de uma versão anterior:** substitua o código no Tampermonkey, desative cópias antigas e, se houver uma execução antiga em andamento, use **Parar e limpar** antes de iniciar o novo processamento. A versão 1.6 não retoma estados salvos pela 1.4 para evitar mudanças inesperadas.
+
 ### Preencher apenas as lacunas
 
 1. Abra o SEGES na **lista de semanas da turma**.
