@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SEGES - Plano Semanal - Automação de preenchimento
 // @namespace    https://openai.local/
-// @version      1.5.0
-// @description  Automação de planos semanais com retomada, progresso, painel móvel, log TXT e relatório.
+// @version      1.6.0
+// @description  Semanas selecionáveis, preenchimento incremental e exclusão em lote confirmada.
 // @match        https://seges.sedu.es.gov.br/*weekly_plans*
 // @grant        none
 // @run-at       document-idle
@@ -1918,6 +1918,223 @@ function openWeekSelectionModal() {
     document.head.appendChild(style);
   }
 
+  function safeSegesUrl(href) {
+    const url=getUrl(href);
+    return url && url.protocol==='https:' && url.origin===location.origin && url.pathname.startsWith('/weekly_plans') ? url : null;
+  }
+
+  function listClassrooms(doc) {
+    const seen=new Set();
+    return qsa('a[href*="weekly_plans?classroom_id="]',doc).map((link)=>{
+      const url=safeSegesUrl(link.getAttribute('href'));
+      const id=url?.searchParams.get('classroom_id');
+      if(!id || url.pathname!=='/weekly_plans'||seen.has(id))return null;
+      seen.add(id);
+      const tr=link.closest('tr');
+      const name=String(tr?.querySelector('td')?.textContent||link.textContent||'').trim();
+      return {id,name:name&&name.length<140?name:'Turma '+id,url:url.href};
+    }).filter(Boolean);
+  }
+
+  function listExistingWeeks(doc,cls) {
+    return qsa('table.table.table-striped tbody tr.middle',doc).map((tr)=>{
+      const cells=tr.querySelectorAll('td');
+      const link=qs('a.btn.btn-sm.btn-primary',tr);
+      const url=safeSegesUrl(link?.getAttribute('href')||'');
+      const week=Number((cells[0]?.textContent||'').trim());
+      if(!url||!Number.isFinite(week)||!cells.length)return null;
+      const match=url.pathname.match(/^\/weekly_plans\/(\d+)(?:\/edit)?\/?$/);
+      if(!match)return null;
+      return {classId:cls.id,className:cls.name,classUrl:cls.url,week,
+        period:String(cells[1]?.textContent||'').trim(),status:String(cells[2]?.textContent||'').trim(),
+        detailUrl:url.href,recordId:match[1],rowHtml:tr.outerHTML};
+    }).filter(Boolean);
+  }
+
+  async function readSegesHtml(href) {
+    const url=safeSegesUrl(href);
+    if(!url)throw Error('Acesso negado: endereço externo ou inválido.');
+    const response=await fetch(url.href,{credentials:'same-origin',cache:'no-store'});
+    const redirected=safeSegesUrl(response.url);
+    if(!response.ok||!redirected)throw Error('Página indisponível ou sessão encerrada (HTTP '+response.status+').');
+    const html=await response.text();
+    return new DOMParser().parseFromString(html,'text/html');
+  }
+
+  function identifyDeleteControl(doc) {
+    for(const form of qsa('form',doc)){
+      const override=String(qs('input[name="_method"]',form)?.value||'').toLowerCase();
+      const method=String(form.getAttribute('method')||'GET').toUpperCase();
+      if(override!=='delete'&&method!=='DELETE')continue;
+      const url=safeSegesUrl(form.getAttribute('action')||'');
+      if(!url||!/^\/weekly_plans\/\d+\/?$/.test(url.pathname))continue;
+      const fields=qsa('input[name]',form).filter((i)=>!i.disabled&&(!['checkbox','radio'].includes(i.type)||i.checked))
+        .map((i)=>[i.name,i.value]);
+      return {type:'form',url:url.href,method:method==='DELETE'?'DELETE':'POST',fields,
+        csrf:qs('meta[name="csrf-token"]',doc)?.getAttribute('content')||''};
+    }
+    for(const link of qsa('a[data-method],a[data-turbo-method],button[data-method]',doc)){
+      const method=String(link.getAttribute('data-method')||link.getAttribute('data-turbo-method')||'').toLowerCase();
+      if(method!=='delete')continue;
+      const url=safeSegesUrl(link.getAttribute('href')||link.getAttribute('formaction')||'');
+      if(!url||!/^\/weekly_plans\/\d+\/?$/.test(url.pathname))continue;
+      return {type:'link',url:url.href,method:'DELETE',fields:[],
+        csrf:qs('meta[name="csrf-token"]',doc)?.getAttribute('content')||''};
+    }
+    return null;
+  }
+
+  async function findActualDeleteControl(week) {
+    const rowDoc=new DOMParser().parseFromString('<table><tbody>'+week.rowHtml+'</tbody></table>','text/html');
+    const listed=identifyDeleteControl(rowDoc);
+    if(listed)return listed;
+    const detail=await readSegesHtml(week.detailUrl);
+    return identifyDeleteControl(detail);
+  }
+
+  async function performActualDeletion(control) {
+    const url=safeSegesUrl(control.url);
+    if(!url||!/^\/weekly_plans\/\d+\/?$/.test(url.pathname))throw Error('Endereço de exclusão recusado.');
+    const csrf=control.csrf||qs('meta[name="csrf-token"]')?.getAttribute('content')||'';
+    if(!csrf&&!control.fields.some((f)=>f[0]==='authenticity_token'))throw Error('Token de segurança não encontrado.');
+    const headers={'Accept':'text/html, application/json','X-Requested-With':'XMLHttpRequest'};
+    if(csrf)headers['X-CSRF-Token']=csrf;
+    const options={method:control.method,credentials:'same-origin',redirect:'follow',headers};
+    if(control.type==='form'&&control.method==='POST'){
+      const body=new URLSearchParams();
+      control.fields.forEach(([key,value])=>body.append(key,value));
+      options.body=body;
+      headers['Content-Type']='application/x-www-form-urlencoded;charset=UTF-8';
+    }
+    const result=await fetch(url.href,options);
+    if(!result.ok||!safeSegesUrl(result.url))throw Error('Falha na resposta do servidor (HTTP '+result.status+').');
+  }
+
+  async function confirmDeletionFromList(week) {
+    const doc=await readSegesHtml(week.classUrl);
+    const remaining=listExistingWeeks(doc,{id:week.classId,name:week.className,url:week.classUrl});
+    if(!qsa('table.table.table-striped',doc).length)return false;
+    return !remaining.some((item)=>item.recordId===week.recordId && item.week===week.week);
+  }
+
+  async function openBulkDeleteModal() {
+    const state=loadState();
+    if(state&&state.status!=='done')return alert('Conclua ou interrompa o preenchimento antes de apagar planos.');
+    qs('#'+CONFIG.modalId)?.remove();
+    const modal=document.createElement('div');
+    modal.id=CONFIG.modalId;
+    modal.innerHTML=`
+    <div class="vm-modal-box" style="max-width:900px">
+      <h3>Excluir planos semanais</h3>
+      <p style="color:#a32b2b;font-size:13px"><b>A exclusão não pode ser desfeita.</b> Selecione turmas e semanas. A automação só executa comandos de exclusão encontrados no próprio SEGES.</p>
+      <div id="vm-excluir-turmas">Carregando turmas...</div>
+      <div class="vm-modal-actions" style="margin-top:10px">
+        <button type="button" data-excluir="consultar" class="vm-primary">Consultar semanas selecionadas</button>
+        <button type="button" data-excluir="todas" class="vm-secondary">Todas as turmas</button>
+        <button type="button" data-excluir="fechar" class="vm-secondary">Fechar</button>
+      </div>
+      <div id="vm-excluir-semanas" style="max-height:35vh;overflow:auto"></div>
+      <div class="vm-modal-actions" style="margin-top:10px">
+        <button type="button" data-excluir="apagar" class="vm-danger" disabled>Excluir planos marcados</button>
+        <button type="button" data-excluir="log" class="vm-secondary">Exportar histórico TXT</button>
+      </div>
+      <pre id="vm-excluir-log" style="max-height:160px;overflow:auto;white-space:pre-wrap;background:#f7fafc;border:1px solid #ddd;padding:8px;font-size:11px"></pre>
+    </div>`;
+    document.body.appendChild(modal);
+    const box=qs('#vm-excluir-turmas',modal);
+    const weekBox=qs('#vm-excluir-semanas',modal);
+    const logBox=qs('#vm-excluir-log',modal);
+    const records=[];
+    const log=(message)=>{
+      records.push('['+new Date().toLocaleTimeString('pt-BR')+'] '+message);
+      logBox.textContent=records.join('\n');
+      logBox.scrollTop=logBox.scrollHeight;
+    };
+    let weeks=[];
+    let processing=false;
+    try{
+      const overview=isClassroomsPage()?document:await readSegesHtml('/weekly_plans');
+      let classes=listClassrooms(overview);
+      const current=getCurrentClassroomId();
+      if(!classes.length&&isWeeksPage()&&current){
+        classes=[{id:current,name:'Turma '+current,url:location.href}];
+      }
+      if(!classes.length)throw Error('Turmas não identificadas. Abra o menu de Planos Semanais.');
+      box.innerHTML='<b>Turmas disponíveis</b><div style="max-height:130px;overflow:auto;border:1px solid #ddd;padding:8px">'+
+        classes.map((cls)=>'<label style="display:block;padding:3px"><input type="checkbox" data-class-id="'+escapeHtml(cls.id)+'" '+(cls.id===current?'checked':'')+'> '+escapeHtml(cls.name)+'</label>').join('')+'</div>';
+      log('Foram encontradas '+classes.length+' turmas.');
+      modal.onclick=async(event)=>{
+        if(event.target===modal && !processing){modal.remove();return;}
+        const action=event.target.closest('[data-excluir]')?.dataset.excluir;
+        if(!action)return;
+        if(action==='fechar'){if(!processing)modal.remove();return;}
+        if(action==='log'){
+          downloadTextFile('seges-exclusoes-'+new Date().toISOString().slice(0,10)+'.txt',records.join('\n'),'text/plain;charset=utf-8');return;
+        }
+        if(action==='todas'){
+          box.querySelectorAll('[data-class-id]').forEach((c)=>{c.checked=true;});return;
+        }
+        if(processing)return;
+        if(action==='consultar'){
+          const chosenIds=new Set(Array.from(box.querySelectorAll('[data-class-id]:checked')).map((c)=>c.dataset.classId));
+          if(!chosenIds.size)return alert('Marque pelo menos uma turma.');
+          processing=true;weeks=[];weekBox.textContent='Lendo os planos das turmas...';
+          try{
+            for(const cls of classes.filter((item)=>chosenIds.has(item.id))){
+              try{
+                const doc=await readSegesHtml(cls.url);
+                const found=listExistingWeeks(doc,cls);
+                weeks.push(...found);
+                log(cls.name+': '+found.length+' registros existentes encontrados.');
+              }catch(error){log(cls.name+': falha de leitura — '+error.message);}
+            }
+            weekBox.innerHTML=weeks.length
+              ?'<p><b>'+weeks.length+' planos encontrados.</b> <button type="button" data-excluir="marcar">Marcar todos</button> <button type="button" data-excluir="limpar">Desmarcar</button></p>'+
+                weeks.map((w,index)=>'<label style="display:flex;align-items:center;gap:9px;padding:6px;border-bottom:1px solid #ddd"><input type="checkbox" data-week-index="'+index+'"><b>'+escapeHtml(w.className)+'</b> · Semana '+w.week+' · '+escapeHtml(w.period)+' · '+escapeHtml(w.status)+'</label>').join('')
+              :'<p>Não foram encontrados planos existentes para exclusão.</p>';
+            qs('[data-excluir="apagar"]',modal).disabled=!weeks.length;
+          }finally{processing=false;}
+          return;
+        }
+        if(action==='marcar'||action==='limpar'){
+          weekBox.querySelectorAll('[data-week-index]').forEach((item)=>{item.checked=action==='marcar';});return;
+        }
+        if(action==='apagar'){
+          const selected=Array.from(weekBox.querySelectorAll('[data-week-index]:checked'))
+            .map((c)=>weeks[Number(c.dataset.weekIndex)]).filter(Boolean);
+          if(!selected.length)return alert('Marque os planos para excluir.');
+          const phrase='EXCLUIR '+selected.length;
+          const input=prompt('Você selecionou '+selected.length+' planos de '+new Set(selected.map((w)=>w.classId)).size+
+            ' turma(s). Não existe desfazer.\n\nDigite exatamente '+phrase+' para confirmar:');
+          if(input!==phrase){log('A operação foi cancelada na confirmação.');return;}
+          processing=true;
+          qs('[data-excluir="apagar"]',modal).disabled=true;
+          let confirmed=0,failed=0,uncertain=0;
+          try{
+            for(const week of selected){
+              try{
+                const control=await findActualDeleteControl(week);
+                if(!control){failed++;log('NÃO EXCLUÍDO '+week.className+' / semana '+week.week+': o SEGES não apresentou comando de exclusão.');continue;}
+                const id=safeSegesUrl(control.url)?.pathname.match(/^\/weekly_plans\/(\d+)\/?$/)?.[1];
+                if(id!==week.recordId){failed++;log('NÃO EXCLUÍDO '+week.className+' / semana '+week.week+': identificador divergente.');continue;}
+                await performActualDeletion(control);
+                const verified=await confirmDeletionFromList(week);
+                if(verified){confirmed++;log('EXCLUSÃO CONFIRMADA '+week.className+' / semana '+week.week);}
+                else{uncertain++;log('REVISAR '+week.className+' / semana '+week.week+': o SEGES respondeu, mas a lista ainda não confirmou a exclusão.');}
+              }catch(error){failed++;log('FALHA '+week.className+' / semana '+week.week+': '+error.message);}
+            }
+            log('Resultado: '+confirmed+' exclusões confirmadas; '+failed+' falhas; '+uncertain+' indeterminadas.');
+            alert('Exclusão em lote finalizada.\nConfirmadas: '+confirmed+'\nFalhas: '+failed+'\nNão confirmadas: '+uncertain+'\nConsulte o histórico.');
+          }finally{processing=false;qs('[data-excluir="apagar"]',modal).disabled=false;}
+        }
+      };
+    }catch(error){
+      box.textContent='Não foi possível abrir o gerenciador: '+error.message;
+      log('ERRO '+error.message);
+      modal.onclick=(event)=>{if(event.target===modal || event.target.closest('[data-excluir="fechar"]'))modal.remove();};
+    }
+  }
+
   function renderPanel() {
     ensurePanelStyles();
 
@@ -1949,6 +2166,7 @@ function openWeekSelectionModal() {
         </div>
         <div class="vm-actions">
           ${canStart ? '<button class="vm-primary" data-vm-action="start">Selecionar semanas</button>' : ''}
+          ${(isWeeksPage() || isClassroomsPage()) ? '<button class="vm-secondary" data-vm-action="delete-manager">Gerenciar exclusões</button>' : ''}
           ${canResume ? '<button class="vm-primary" data-vm-action="resume">Continuar de onde parou</button>' : ''}
           ${canShowReport ? '<button class="vm-secondary" data-vm-action="report">Ver relatório</button>' : ''}
           ${state ? '<button class="vm-secondary" data-vm-action="toggle-log">' + (logVisible ? 'Ocultar log' : 'Mostrar log') + '</button>' : ''}
@@ -1966,6 +2184,10 @@ function openWeekSelectionModal() {
       if (!button) return;
       const action = button.getAttribute('data-vm-action');
 
+      if (action === 'delete-manager') {
+        await openBulkDeleteModal();
+        return;
+      }
       if (action === 'start') {
         openWeekSelectionModal();
         return;
