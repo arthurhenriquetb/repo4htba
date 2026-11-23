@@ -813,15 +813,15 @@ function getExistingFieldsInRow(tr) {
     const knowledgesSelect = qs('.structured-weekly-plan-knowledges-select', block);
     const methodologiesSelect = qs('.structured-weekly-plan-methodologies-select', block);
 
-    if (descriptorsSelect && dependentValues.descriptors.length) {
+    if (descriptorsSelect && !hasAnyConcreteOption(descriptorsSelect) && dependentValues.descriptors.length) {
       rebuildSelectOptions(descriptorsSelect, dependentValues.descriptors);
     }
-    if (knowledgesSelect && dependentValues.knowledges.length) {
+    if (knowledgesSelect && !hasAnyConcreteOption(knowledgesSelect) && dependentValues.knowledges.length) {
       rebuildSelectOptions(knowledgesSelect, dependentValues.knowledges);
     }
     if (methodologiesSelect) {
       methodologiesSelect.disabled = false;
-      if (dependentValues.methodologies.length) {
+      if (!hasAnyConcreteOption(methodologiesSelect) && dependentValues.methodologies.length) {
         rebuildSelectOptions(methodologiesSelect, dependentValues.methodologies);
       }
     }
@@ -1197,7 +1197,12 @@ function getExistingFieldsInRow(tr) {
       return;
     }
 
-    const block = await ensureStructuredBlock(rowElement);
+    // Completar o bloco já utilizado, se houver várias habilidades na aula.
+    const existingBlocks = getVisibleStructuredBlocks(rowElement);
+    const matchingBlock = existingBlocks.find((part) =>
+      String(qs('.structured-weekly-plan-id-select', part)?.value || '').trim() === String(instruction.abilityValue)
+    );
+    const block = matchingBlock || await ensureStructuredBlock(rowElement);
     initializeSelectsInRoot(block);
     const selectedBefore = String(qs('.structured-weekly-plan-id-select', block)?.value || '').trim();
     if (selectedBefore && selectedBefore !== String(instruction.abilityValue)) {
@@ -1379,7 +1384,7 @@ function getExistingFieldsInRow(tr) {
       }
     }
 
-    if (evaluationSelect && !String(evaluationSelect.value || '').trim()) {
+    if (evaluationSelect && (!selectedBefore || !String(evaluationSelect.value || '').trim())) {
       evaluationSelect.value = instruction.evaluation ? 'true' : 'false';
       evaluationSelect.dispatchEvent(new Event('input', { bubbles: true }));
       evaluationSelect.dispatchEvent(new Event('change', { bubbles: true }));
