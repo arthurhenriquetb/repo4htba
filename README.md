@@ -4,7 +4,7 @@
 
 ## Instalação
 
-**Script principal:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js) · Versão **2.1.0**
+**Script principal:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js) · Versão **2.2.0**
 
 1. Abra o arquivo acima no GitHub.
 2. Clique em **Raw** (ou **Código bruto**) para exibir o código puro.
@@ -41,11 +41,29 @@ Para selecionar várias turmas:
 3. Marque **uma ou mais turmas**.
 4. Clique em **Mostrar semanas**.
 5. Para cada turma, marque as semanas desejadas. Use **Todas**, **Sem plano** ou **Nenhuma** para agilizar.
-6. Clique em **Iniciar preenchimento selecionado**.
+6. Se o nome da turma não identificar claramente a etapa, escolha explicitamente **ano/série** no campo da turma.
+7. Clique em **Iniciar preenchimento selecionado** para **mapear** as semanas (isso ainda não salva nada).
+8. Terminada a leitura da primeira turma, aparece a janela **Conferir habilidades antes do preenchimento**, organizada por **semana e aula**. Veja a habilidade sugerida e as habilidades dos cinco planos anteriores. Pode escolher outra habilidade disponível naquela aula, deixar a aula sem preencher ou preservar uma aula existente.
+9. Clique em **Aprovar e preencher**. Quando pedir alteração de habilidade já registrada, haverá uma segunda confirmação explícita.
+10. A próxima turma será mapeada e passará por sua própria conferência antes do preenchimento. No final, o relatório reúne as turmas.
 
-O programa lê todas as semanas de cada turma para identificar habilidades já utilizadas e considera as semanas selecionadas ao completar campos. Ele tenta **preservar conteúdos e habilidades preexistentes** e dar preferência às habilidades menos usadas para reduzir repetições. Processa as turmas em sequência, com barra de progresso e relatório conjunto por turma.
+### Seleção pedagógica de habilidades (v2.2)
 
-A execução continua em navegações do SEGES. Se houver uma execução antiga incompatível em andamento, use **Parar e limpar** no painel para iniciar uma nova seleção.
+- O programa considera as habilidades registradas nos **cinco planos anteriores** da turma, na ordem das semanas.
+- Se a última habilidade utilizada aparecer **uma ou duas vezes** nesse histórico, sugere repeti-la.
+- Se ela aparecer **três ou mais vezes**, sugere a **próxima** habilidade disponível na lista da aula.
+- Se chegar à última habilidade da lista, **permanece nela**. **Não retorna ao início.**
+- O programa filtra opções por **etapa/ano**, usando a série escolhida ou o código curricular da lista quando for inequívoco. Se não identificar a etapa com segurança, **não faz sugestão automática**: a escolha fica com o usuário.
+- Cada sugestão deve ser **aprovada individualmente por aula** antes de qualquer preenchimento.
+- As opções escolhidas precisam existir na lista real do SEGES para aquela aula. O programa não insere habilidades fictícias nem força valores não disponibilizados pelo formulário.
+
+### Proteção contra execução interminável e erros
+
+Depois de clicar em **Salvar**, o script registra que o envio foi realizado e **não volta a clicar em Salvar na mesma semana**. Se o SEGES permanecer no formulário, apresentar um erro, redirecionar de maneira inesperada ou não confirmar o retorno, a automação fica **interrompida**, com a mensagem do erro no painel e no log. Também existe um limite de espera para impedir insistência sem fim.
+
+**Importante:** uma interrupção não significa que o registro não tenha sido salvo. Confira o SEGES antes de repetir a operação. Para iniciar uma execução nova após um erro, volte à lista de Planos Semanais e use **Preencher planos** (ou **Parar e limpar** para remover a execução antiga). A versão 2.2 não retoma estados de execução das versões anteriores.
+
+O programa tenta preservar conteúdos e habilidades preexistentes; substituições exigem confirmação. O preenchimento percorre as turmas em sequência, com barra de progresso e relatório por turma.
 
 #### Exclusão de planos
 
@@ -66,13 +84,14 @@ As cópias independentes foram arquivadas em:
 - [Validação v6.1 original](SEGES/arquivo/validacao-automatica-v6.1-original.js)
 - [Plano Semanal v1.6.0](SEGES/arquivo/plano-semanal-v1.6.0-original.user.js)
 - [Plano Semanal v1.3.2 original](SEGES/arquivo/plano-semanal-v1.3.2-original.user.js)
+- [Assistente unificado v2.1.0 (arquivo histórico)](SEGES/arquivo/assistente-seges-v2.1.0-antes-correcao.user.js)
 
 Não instale os arquivos históricos junto com o script principal.
 
 ## Limites e verificações
 
-- A sintaxe JavaScript da versão unificada foi conferida.
-- A troca entre turmas, a consolidação do relatório e algumas regras de preenchimento foram testadas com **dados simulados**.
+- A sintaxe JavaScript da versão 2.2 foi conferida.
+- A passagem entre turmas, a chegada à tela de revisão, o algoritmo baseado nos cinco planos anteriores, a filtragem por ano/série e as proteções de preenchimento foram testados em **cenários simulados**.
 - **Não foi possível realizar teste na sessão autenticada do SEGES**. O funcionamento depende da estrutura e das permissões reais disponíveis na interface.
 - O indicador de progresso mede etapas processadas, não confirma por si só o salvamento no servidor. Confira os planos e o log ao finalizar.
 - Como o script interage com registros escolares oficiais, teste inicialmente em poucas semanas. Verifique cada exclusão diretamente no SEGES.
