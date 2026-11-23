@@ -3060,209 +3060,122 @@
         return (state.abilities || []).find((ability) => String(ability.value) === String(abilityValue)) || null;
       }
     
-      async function applyInstructionToRow(state, rowElement, instruction) {
-        if (instruction.kind !== 'science') {
-          const textarea = qs('textarea', rowElement);
-          if (textarea && instruction.manualText && !String(textarea.value || '').trim()) {
-            setTextareaValue(textarea, instruction.manualText);
-          }
-          return;
-        }
-    
-        // Completar o bloco já utilizado, se houver várias habilidades na aula.
-        const existingBlocks = getVisibleStructuredBlocks(rowElement);
-        const matchingBlock = existingBlocks.find((part) =>
-          String(qs('.structured-weekly-plan-id-select', part)?.value || '').trim() === String(instruction.abilityValue)
-        );
-        const block = matchingBlock || await ensureStructuredBlock(rowElement);
-        initializeSelectsInRoot(block);
-        const selectedBefore = String(qs('.structured-weekly-plan-id-select', block)?.value || '').trim();
-        if (selectedBefore && selectedBefore !== String(instruction.abilityValue)) {
-          appendLog(state, 'Habilidade já registrada diverge do plano calculado; não sobrescrever.', {
-            week: getCurrentWeekFromForm(), row: instruction.rowIndex+1, selectedBefore
-          });
-          return;
-        }
-        const ability = getAbilityFromState(state, instruction.abilityValue);
-    
-        const evaluationSelect = qs('.structured-weekly-plan-evaluation-select', block);
-        const abilitySelect = qs('.structured-weekly-plan-id-select', block);
-        let knowledgeSelect = qs('.structured-weekly-plan-knowledges-select', block);
-        let methodologySelect = qs('.structured-weekly-plan-methodologies-select', block);
-    
-        if (!abilitySelect) {
-          throw new Error('Select de habilidade não encontrado.');
-        }
-    
-        let targetAbilityOption = Array.from(abilitySelect.options).find((option) => String(option.value) === String(instruction.abilityValue));
-        if (!targetAbilityOption) {
-          targetAbilityOption = new Option(instruction.abilityLabel, instruction.abilityValue, false, false);
-          setStructuredAbilityOptionData(targetAbilityOption, ability);
-          abilitySelect.add(targetAbilityOption);
-        } else {
-          setStructuredAbilityOptionData(targetAbilityOption, ability);
-        }
-    
-        const abilitySelected = selectedBefore
-          ? true
-          : await populateSelectRobust(abilitySelect, [String(instruction.abilityValue)], false);
-        if (!abilitySelected) {
-          throw new Error(`Não foi possível selecionar a habilidade ${instruction.abilityLabel}.`);
-        }
-    
-        await sleep(CONFIG.afterAbilityDelayMs);
-    
-        knowledgeSelect = await waitFor(() => qs('.structured-weekly-plan-knowledges-select', block), 2500, 100) || knowledgeSelect;
-        methodologySelect = await waitFor(() => qs('.structured-weekly-plan-methodologies-select', block), 2500, 100) || methodologySelect;
-    
-        if (knowledgeSelect && !hasAnyConcreteOption(knowledgeSelect) && (ability?.knowledges || []).length) {
-          forcePopulateDependentSelects(block, ability);
-          knowledgeSelect = qs('.structured-weekly-plan-knowledges-select', block) || knowledgeSelect;
-        }
-        if (!instruction.evaluation && methodologySelect && !hasAnyConcreteOption(methodologySelect) && (ability?.methodologies || []).length) {
-          forcePopulateDependentSelects(block, ability);
-          methodologySelect = qs('.structured-weekly-plan-methodologies-select', block) || methodologySelect;
-        }
-    
-        const hasKnowledge = !!getSelectedValues(knowledgeSelect).length;
-        const hasMethodology = !!getSelectedValues(methodologySelect).length;
-        const selectedKnowledges = hasKnowledge ? [] : getFallbackDesiredValues(knowledgeSelect, instruction.knowledge ? [instruction.knowledge] : []);
-        const selectedMethodologies = hasMethodology ? [] : getFallbackDesiredValues(methodologySelect, instruction.methodologies || []);
-        const fallbackKnowledges = ability?.knowledges || selectedKnowledges;
-        const fallbackMethodologies = ability?.methodologies || selectedMethodologies;
-    
-        if (selectedKnowledges.length && knowledgeSelect) {
-          let loadedKnowledgeSelect = await ensureSelectHasExpectedOptions(
-            state,
-            knowledgeSelect,
-            selectedKnowledges,
-            fallbackKnowledges,
-            'Objeto de conhecimento',
-            {
-              week: getCurrentWeekFromForm(),
-              rowIndex: instruction.rowIndex,
-              ability: instruction.abilityLabel
-            }
-          );
-    
-          await sleep(CONFIG.afterKnowledgeDelayMs);
-          const desiredKnowledgeValues = getFallbackDesiredValues(loadedKnowledgeSelect, selectedKnowledges);
-          await waitForStableConcreteOptions(loadedKnowledgeSelect, desiredKnowledgeValues, 5000, 1000);
-          logSelectSnapshot(state, 'Objeto de conhecimento - opções estabilizadas', loadedKnowledgeSelect, desiredKnowledgeValues, {
-            week: getCurrentWeekFromForm(),
-            rowIndex: instruction.rowIndex,
-            ability: instruction.abilityLabel
-          });
-    
-          let knowledgeSelected = await directSelectAndVerify(
-            state,
-            'Objeto de conhecimento',
-            loadedKnowledgeSelect,
-            desiredKnowledgeValues,
-            true,
-            { week: getCurrentWeekFromForm(), rowIndex: instruction.rowIndex, ability: instruction.abilityLabel }
-          );
-    
-          if (!knowledgeSelected) {
-            appendLog(state, 'Objeto de conhecimento - fallback: reconstruindo opções do campo.', {
-              week: getCurrentWeekFromForm(),
-              rowIndex: instruction.rowIndex,
-              fallbackKnowledges
-            });
-            rebuildSelectOptions(loadedKnowledgeSelect, fallbackKnowledges);
-            await sleep(500);
-            await waitForStableConcreteOptions(loadedKnowledgeSelect, desiredKnowledgeValues, 2500, 500);
-            knowledgeSelected = await directSelectAndVerify(
-              state,
-              'Objeto de conhecimento (após rebuild)',
-              loadedKnowledgeSelect,
-              desiredKnowledgeValues,
-              true,
-              { week: getCurrentWeekFromForm(), rowIndex: instruction.rowIndex, ability: instruction.abilityLabel }
-            );
-          }
-    
-          if (!knowledgeSelected) {
-            appendLog(state, 'Falha ao selecionar objeto de conhecimento.', {
-              week: getCurrentWeekFromForm(),
-              rowIndex: instruction.rowIndex,
-              selectedKnowledges,
-              availableOptions: Array.from((loadedKnowledgeSelect?.options || [])).map((option) => option.textContent || option.value)
-            });
-            throw new Error(`Objeto de conhecimento não selecionado na semana ${getCurrentWeekFromForm()} linha ${instruction.rowIndex + 1}.`);
-          }
-        }
-    
-        if (!instruction.evaluation && selectedMethodologies.length && methodologySelect) {
-          let loadedMethodologySelect = await ensureSelectHasExpectedOptions(
-            state,
-            methodologySelect,
-            selectedMethodologies,
-            fallbackMethodologies,
-            'Metodologias',
-            {
-              week: getCurrentWeekFromForm(),
-              rowIndex: instruction.rowIndex,
-              ability: instruction.abilityLabel
-            }
-          );
-    
-          await sleep(CONFIG.afterMethodologyDelayMs);
-          const desiredMethodologyValues = getFallbackDesiredValues(loadedMethodologySelect, selectedMethodologies);
-          await waitForStableConcreteOptions(loadedMethodologySelect, desiredMethodologyValues, 5000, 1000);
-          logSelectSnapshot(state, 'Metodologias - opções estabilizadas', loadedMethodologySelect, desiredMethodologyValues, {
-            week: getCurrentWeekFromForm(),
-            rowIndex: instruction.rowIndex,
-            ability: instruction.abilityLabel
-          });
-    
-          let methodologySelected = await directSelectAndVerify(
-            state,
-            'Metodologias',
-            loadedMethodologySelect,
-            desiredMethodologyValues,
-            true,
-            { week: getCurrentWeekFromForm(), rowIndex: instruction.rowIndex, ability: instruction.abilityLabel }
-          );
-    
-          if (!methodologySelected) {
-            appendLog(state, 'Metodologias - fallback: reconstruindo opções do campo.', {
-              week: getCurrentWeekFromForm(),
-              rowIndex: instruction.rowIndex,
-              fallbackMethodologies
-            });
-            rebuildSelectOptions(loadedMethodologySelect, fallbackMethodologies);
-            loadedMethodologySelect.disabled = false;
-            await sleep(500);
-            await waitForStableConcreteOptions(loadedMethodologySelect, desiredMethodologyValues, 2500, 500);
-            methodologySelected = await directSelectAndVerify(
-              state,
-              'Metodologias (após rebuild)',
-              loadedMethodologySelect,
-              desiredMethodologyValues,
-              true,
-              { week: getCurrentWeekFromForm(), rowIndex: instruction.rowIndex, ability: instruction.abilityLabel }
-            );
-          }
-    
-          if (!methodologySelected) {
-            appendLog(state, 'Falha ao selecionar metodologias.', {
-              week: getCurrentWeekFromForm(),
-              rowIndex: instruction.rowIndex,
-              selectedMethodologies,
-              availableOptions: Array.from((loadedMethodologySelect?.options || [])).map((option) => option.textContent || option.value)
-            });
-            throw new Error(`Metodologias não selecionadas na semana ${getCurrentWeekFromForm()} linha ${instruction.rowIndex + 1}.`);
-          }
-        }
-    
-        if (evaluationSelect && (!selectedBefore || !String(evaluationSelect.value || '').trim())) {
-          evaluationSelect.value = instruction.evaluation ? 'true' : 'false';
-          evaluationSelect.dispatchEvent(new Event('input', { bubbles: true }));
-          evaluationSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      }
-    
+      async function selectExactPresent(select,value,label) {
+  if(!select)throw Error(label+': campo ausente.');
+  const wanted=String(value);
+  const option=Array.from(select.options||[]).find(opt=>String(opt.value)===wanted);
+  if(!option)throw Error(label+': opção '+wanted+' não existe neste formulário.');
+  if(select.multiple){
+    Array.from(select.options).forEach(opt=>{opt.selected=String(opt.value)===wanted;});
+  }else{
+    select.value=wanted;
+  }
+  select.dispatchEvent(new Event('input',{bubbles:true}));
+  select.dispatchEvent(new Event('change',{bubbles:true}));
+  if(window.jQuery){
+    window.jQuery(select).trigger('change');
+    window.jQuery(select).trigger('change.select2');
+  }
+  if(!getSelectedValues(select).includes(wanted)&&String(select.value)!==wanted)
+    throw Error(label+': o SEGES rejeitou a seleção.');
+}
+
+      async function chooseExactDependent(select,value,label) {
+  if(!value)return;
+  if(!select)throw Error(label+': campo não encontrado.');
+  const key=normalizeText(value);
+  const found=await waitFor(()=>Array.from(select.options||[]).find(opt=>
+    String(opt.value)===String(value)||normalizeText(opt.textContent)===key),5500,120);
+  if(!found)throw Error(label+': opção prevista não foi disponibilizada pelo SEGES.');
+  select.disabled=false;
+  selectExactPresent(select,found.value,label);
+  await sleep(120);
+  if(!getSelectedValues(select).includes(String(found.value)))
+    throw Error(label+': valor não permaneceu selecionado.');
+}
+
+      async function applyInstructionToRow(state,rowElement,instruction) {
+  if(instruction.kind!=='science'){
+    const textarea=qs('textarea',rowElement);
+    if(!textarea)throw Error('Campo de texto não encontrado na aula '+(instruction.rowIndex+1));
+    if(instruction.manualText&&!String(textarea.value||'').trim())
+      setTextareaValue(textarea,instruction.manualText);
+    return;
+  }
+  if(!state.approvedAt)throw Error('Não houve aprovação das habilidades.');
+  if(!instruction.abilityValue)throw Error('Aula sem habilidade selecionada na revisão.');
+  const available=(instruction.availableAbilities||[]).find(
+    value=>String(value.value)===String(instruction.abilityValue)
+  );
+  if(!available)throw Error('A habilidade aprovada não pertence à lista autorizada da aula.');
+
+  // Reabrir apenas as opções existentes na aula real; nunca injetar uma nova opção.
+  const liveChoices=extractAbilityOptionsForRow(rowElement);
+  if(!liveChoices.some(item=>String(item.value)===String(instruction.abilityValue)))
+    throw Error('A habilidade '+instruction.abilityValue+' não está disponível nesta aula. Verifique a etapa escolar.');
+
+  const existing=getVisibleStructuredBlocks(rowElement);
+  const target=String(instruction.abilityValue);
+  const before=String(instruction.existingAbilityValue||'');
+  let block=existing.find(part=>String(qs('.structured-weekly-plan-id-select',part)?.value||'')===target);
+  if(!block&&instruction.replaceExisting&&before)
+    block=existing.find(part=>String(qs('.structured-weekly-plan-id-select',part)?.value||'')===before);
+  if(!block)
+    block=existing.find(part=>!String(qs('.structured-weekly-plan-id-select',part)?.value||'').trim());
+  if(!block){
+    const button=qs('.add_fields',rowElement);
+    if(!button)throw Error('Não foi encontrado controle oficial para adicionar currículo nesta aula.');
+    const oldCount=existing.length;
+    button.click();
+    block=await waitFor(()=>getVisibleStructuredBlocks(rowElement).length>oldCount?
+      getVisibleStructuredBlocks(rowElement).at(-1):null,5000,100);
+    if(!block)throw Error('O SEGES não criou o bloco curricular da aula.');
+  }
+  initializeSelectsInRoot(block);
+  const abilitySelect=qs('.structured-weekly-plan-id-select',block);
+  if(!abilitySelect)throw Error('Seletor da habilidade não localizado na aula.');
+  const current=String(abilitySelect.value||'').trim();
+  if(current&&current!==target&&!instruction.replaceExisting)
+    throw Error('Uma habilidade já registrada seria substituída sem autorização.');
+  if(instruction.replaceExisting && current!==before)
+    throw Error('A habilidade existente mudou após a conferência. Recomece a revisão.');
+
+  const option=await waitFor(()=>Array.from(abilitySelect.options||[])
+    .find(item=>String(item.value)===target),5000,120);
+  if(!option)throw Error('A habilidade aprovada não está na lista atual do SEGES: '+target);
+  if(current!==target){
+    selectExactPresent(abilitySelect,target,'Habilidade');
+    await sleep(CONFIG.afterAbilityDelayMs);
+  }
+
+  let knowledgeSelect=qs('.structured-weekly-plan-knowledges-select',block);
+  let methodSelect=qs('.structured-weekly-plan-methodologies-select',block);
+  const evalSelect=qs('.structured-weekly-plan-evaluation-select',block);
+  const replacing=!!instruction.replaceExisting;
+  if(replacing){
+    for(const field of [knowledgeSelect,methodSelect]){
+      if(!field)continue;
+      Array.from(field.options||[]).forEach(opt=>{opt.selected=false;});
+      if(!field.multiple)field.value='';
+      field.dispatchEvent(new Event('change',{bubbles:true}));
+      if(window.jQuery)window.jQuery(field).trigger('change');
+    }
+  }
+
+  knowledgeSelect=await waitFor(()=>qs('.structured-weekly-plan-knowledges-select',block),2500,100)||knowledgeSelect;
+  methodSelect=await waitFor(()=>qs('.structured-weekly-plan-methodologies-select',block),2500,100)||methodSelect;
+  if(!getSelectedValues(knowledgeSelect).length && instruction.knowledge)
+    await chooseExactDependent(knowledgeSelect,instruction.knowledge,'Objeto de conhecimento');
+  if(!getSelectedValues(methodSelect).length && instruction.methodologies?.length)
+    await chooseExactDependent(methodSelect,instruction.methodologies[0],'Metodologia');
+
+  if(evalSelect && (!current||replacing)){
+    const wanted=instruction.evaluation?'true':'false';
+    if(Array.from(evalSelect.options||[]).some(opt=>String(opt.value)===wanted))
+      selectExactPresent(evalSelect,wanted,'Avaliação');
+  }
+}
+
       function getWeekPlanForCurrentPage(state) {
         const currentWeek = getCurrentWeekFromForm();
         if (currentWeek == null) return null;
