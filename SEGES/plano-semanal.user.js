@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES - Plano Semanal - Automação de preenchimento
 // @namespace    https://openai.local/
-// @version      1.4.0
+// @version      1.5.0
 // @description  Automação de planos semanais com retomada, progresso, painel móvel, log TXT e relatório.
 // @match        https://seges.sedu.es.gov.br/*weekly_plans*
 // @grant        none
@@ -318,6 +318,25 @@
       .sort((a, b) => a.week - b.week);
   }
 
+function getExistingFieldsInRow(tr) {
+  const blocks = getVisibleStructuredBlocks(tr);
+  const values = [];
+  let knowledgeCount = 0;
+  let methodologyCount = 0;
+  let evaluation = '';
+  for(const block of blocks) {
+    const select = qs('.structured-weekly-plan-id-select',block);
+    const value = String(select?.value||'').trim();
+    if(value) values.push(value);
+    knowledgeCount += getSelectedValues(qs('.structured-weekly-plan-knowledges-select',block)).length;
+    methodologyCount += getSelectedValues(qs('.structured-weekly-plan-methodologies-select',block)).length;
+    const evalSelect=qs('.structured-weekly-plan-evaluation-select',block);
+    if(String(evalSelect?.value||'')==='true') evaluation='true';
+    else if(String(evalSelect?.value||'')==='false'&&!evaluation) evaluation='false';
+  }
+  return {existingAbilityValue:values[0]||'',existingKnowledgeCount:knowledgeCount,existingMethodologyCount:methodologyCount,existingEvaluation:evaluation};
+}
+
   function parseCurrentWeekSummary() {
     const week = getCurrentWeekFromForm();
     const rows = qsa('#weekly_plan tr.by-curriculum-discipline').map((tr, index) => {
@@ -343,7 +362,9 @@
         date,
         kind,
         manualProfile,
-        hasManual: !!manualTextarea
+        hasManual: !!manualTextarea,
+        existingManualText: String(manualTextarea?.value || '').trim(),
+        ...getExistingFieldsInRow(tr)
       };
     });
 
@@ -1619,6 +1640,60 @@
   }
 
 
+function openWeekSelectionModal() {
+  if (!isWeeksPage()) return alert('Abra a lista de semanas da turma.');
+  const weeks = parseWeeksTable();
+  if(!weeks.length) return alert('Nenhuma semana encontrada.');
+  qs('#'+CONFIG.modalId)?.remove();
+  const modal=document.createElement('div');
+  modal.id=CONFIG.modalId;
+  modal.innerHTML=`
+    <div class="vm-modal-box" style="max-width:720px">
+      <h3>Selecionar semanas para preencher</h3>
+      <p style="font-size:13px">Serão lidas todas as semanas para identificar habilidades já utilizadas. Somente as semanas marcadas receberão complementos.</p>
+      <div class="vm-modal-actions">
+        <button type="button" data-pick="all">Todas</button>
+        <button type="button" data-pick="none">Nenhuma</button>
+        <button type="button" data-pick="new">Só semanas sem plano</button>
+      </div>
+      <div style="max-height:42vh;overflow:auto;padding:8px;border:1px solid #ddd">
+        ${weeks.map((w)=>`
+        <label style="display:flex;gap:8px;align-items:center;padding:7px;border-bottom:1px solid #eee">
+          <input type="checkbox" data-vm-week="${w.week}" checked>
+          <b>Semana ${w.week}</b><span>${escapeHtml(w.period||'')} · ${escapeHtml(w.statusLabel||'')}</span>
+        </label>`).join('')}
+      </div>
+      <div class="vm-modal-actions" style="margin-top:12px">
+        <button class="vm-primary" type="button" data-start-selected>Mapear e completar selecionadas</button>
+        <button class="vm-secondary" type="button" data-cancel>Cancelar</button>
+      </div>
+    </div>`;
+  modal.onclick=(event)=>{
+    if(event.target===modal || event.target.closest('[data-cancel]')){modal.remove();return;}
+    const pick=event.target.closest('[data-pick]')?.dataset.pick;
+    if(pick){
+      modal.querySelectorAll('[data-vm-week]').forEach((checkbox)=>{
+        const week=weeks.find((w)=>w.week===Number(checkbox.dataset.vmWeek));
+        checkbox.checked=pick==='all'||(pick==='new' && /\/new(?:\?|$)/.test(week?.url||''));
+      });
+    }
+    if(event.target.closest('[data-start-selected]')){
+      const selected=Array.from(modal.querySelectorAll('[data-vm-week]:checked')).map((c)=>Number(c.dataset.vmWeek));
+      if(!selected.length)return alert('Selecione pelo menos uma semana.');
+      const existing=loadState();
+      if(existing && existing.status!=='done')return alert('Há uma execução em andamento. Termine-a ou use Parar e limpar.');
+      const state=buildStateFromCurrentWeeksPage();
+      state.selectedWeeks=selected;
+      appendLog(state,'Automação iniciada com semanas escolhidas.',{selectedWeeks:selected,readWeeks:state.weeks.length});
+      saveState(state);
+      modal.remove();
+      renderPanel();
+      location.href=state.weeks[0].url;
+    }
+  };
+  document.body.appendChild(modal);
+}
+
   function buildStateFromCurrentWeeksPage() {
     const parsedWeeks = parseWeeksTable();
     const weeks = CONFIG.maxWeeksPerRun ? parsedWeeks.slice(0, CONFIG.maxWeeksPerRun) : parsedWeeks;
@@ -1921,7 +1996,7 @@
           <div class="vm-progress-fill" style="width:${progress.percent}%"></div>
         </div>
         <div class="vm-actions">
-          ${canStart ? '<button class="vm-primary" data-vm-action="start">Mapear e preencher</button>' : ''}
+          ${canStart ? '<button class="vm-primary" data-vm-action="start">Selecionar semanas</button>' : ''}
           ${canResume ? '<button class="vm-primary" data-vm-action="resume">Continuar de onde parou</button>' : ''}
           ${canShowReport ? '<button class="vm-secondary" data-vm-action="report">Ver relatório</button>' : ''}
           ${state ? '<button class="vm-secondary" data-vm-action="toggle-log">' + (logVisible ? 'Ocultar log' : 'Mostrar log') + '</button>' : ''}
@@ -1940,15 +2015,7 @@
       const action = button.getAttribute('data-vm-action');
 
       if (action === 'start') {
-        const newState = buildStateFromCurrentWeeksPage();
-        if (!newState.weeks.length) {
-          alert('Nenhuma semana foi encontrada nesta página.');
-          return;
-        }
-        appendLog(newState, 'Automação iniciada.');
-        saveState(newState);
-        renderPanel();
-        location.href = newState.weeks[0].url;
+        openWeekSelectionModal();
         return;
       }
 
