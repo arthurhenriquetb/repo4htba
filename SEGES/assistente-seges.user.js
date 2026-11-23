@@ -2157,7 +2157,7 @@
             const link = qs('a.btn.btn-sm.btn-primary', tr);
             if (!link) return null;
             const href = link.getAttribute('href') || '';
-            const url = getUrl(href);
+            const url = safeSegesUrl(href);
             const week = Number((cells[0].textContent || '').trim());
             if (!url || Number.isNaN(week)) return null;
             return {
@@ -3264,6 +3264,7 @@
   classroomId:job.id,classroomName:job.name,
   weeksScanned:state.weeks.length,selectedWeeks:state.selectedWeeks.length,
   weeksCompleted:state.applyWeeks?.length||0,filledRows:state.reportRows?.length||0,
+  logs:(state.logs||[]).map(entry=>({...entry})),
   rows:(state.reportRows||[]).map((row)=>({...row,classroomName:job.name,classroomId:job.id}))
  });
  if(batch.index+1<batch.jobs.length){
@@ -3274,6 +3275,7 @@
  }
  state.status='done';state.finishedAt=new Date().toISOString();
  state.reportRows=batch.results.flatMap((entry)=>entry.rows);
+ state.logs=batch.results.flatMap((entry)=>entry.logs||[]).slice(-499);
  state.computed={...state.computed,totalClasses:batch.jobs.length,
   scannedWeeks:batch.results.reduce((n,r)=>n+r.weeksScanned,0),
   totalFilledWeeks:batch.results.reduce((n,r)=>n+r.weeksCompleted,0),
@@ -4192,6 +4194,7 @@
     
         const rowsHtml = state.reportRows.map((row) => `
           <tr>
+            <td>${escapeHtml(row.classroomName || state.classroomName || state.classroomId || "")}</td>
             <td>${escapeHtml(row.week)}</td>
             <td>${escapeHtml(row.date)}</td>
             <td>${escapeHtml(row.discipline)}</td>
@@ -4216,6 +4219,7 @@
             <table>
               <thead>
                 <tr>
+                  <th>Turma</th>
                   <th>Semana</th>
                   <th>Data</th>
                   <th>Disciplina</th>
@@ -4247,9 +4251,10 @@
           );
         });
         modal.querySelector('[data-vm-modal-action="download-csv"]').addEventListener('click', () => {
-          const header = ['Semana', 'Data', 'Disciplina', 'Tipo', 'Habilidade', 'Objeto', 'Metodologias', 'Avaliação', 'Conteúdo manual'];
+          const header = ['Turma', 'Semana', 'Data', 'Disciplina', 'Tipo', 'Habilidade', 'Objeto', 'Metodologias', 'Avaliação', 'Conteúdo manual'];
           const lines = [header.join(';')].concat(
             state.reportRows.map((row) => [
+              row.classroomName || state.classroomName || state.classroomId || "",
               row.week,
               row.date,
               row.discipline,
