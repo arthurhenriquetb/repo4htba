@@ -1655,7 +1655,7 @@ function openWeekSelectionModal() {
     const classroomId = getCurrentClassroomId() || getUrl(weeks[0]?.url || '')?.searchParams.get('classroom_id') || null;
 
     return {
-      version: 1,
+      version: 2,
       status: 'scanning',
       startedAt: new Date().toISOString(),
       finishedAt: null,
@@ -1685,6 +1685,9 @@ function openWeekSelectionModal() {
 
   function getSummaryText(state) {
     if (!state) return 'Nenhuma automação em andamento.';
+    if (state.version !== 2 && state.status !== 'done') {
+      return 'Execução antiga: use Parar e limpar antes de iniciar a versão 1.6.';
+    }
 
     if (state.status === 'scanning') {
       return `Mapeando semanas ${state.scanIndex}/${state.weeks.length}`;
@@ -1693,7 +1696,7 @@ function openWeekSelectionModal() {
       return `Aplicando preenchimento ${state.applyIndex}/${(state.applyWeeks || state.weeks).length}`;
     }
     if (state.status === 'done') {
-      return `Concluído. Semanas processadas: ${state.weeks.length}`;
+      return `Concluído. Semanas com lacunas processadas: ${state.computed?.weeksToFill ?? state.weeks.length}`;
     }
     return `Estado: ${state.status}`;
   }
@@ -2161,7 +2164,7 @@ function openWeekSelectionModal() {
     const logVisible = localStorage.getItem(PANEL_LOG_VISIBLE_KEY) === '1';
     const progress = getProgressInfo(state);
     const canStart = isWeeksPage() && !state;
-    const canResume = isWeeksPage() && !!state && state.status !== 'done';
+    const canResume = isWeeksPage() && !!state && state.version === 2 && state.status !== 'done';
     const canShowReport = !!state?.reportRows?.length;
 
     panel.innerHTML = `
@@ -2351,6 +2354,11 @@ function openWeekSelectionModal() {
 
     const state = loadState();
     if (!state) return;
+    // A estrutura do plano mudou: não retomar uma execução da versão anterior.
+    if (state.version !== 2 && state.status !== 'done') {
+      renderPanel();
+      return;
+    }
 
     if (localStorage.getItem(REPORT_WINDOW_KEY) === '1' && isWeeksPage() && state.status === 'done') {
       localStorage.removeItem(REPORT_WINDOW_KEY);
