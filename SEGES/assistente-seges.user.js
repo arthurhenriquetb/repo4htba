@@ -2375,6 +2375,8 @@
       }
       const instruction={
         kind:'science',rowIndex:row.rowIndex,weekForReport:summary.week,
+        recentFive:history.slice(-5).map(value=>
+          compatible.choices.find(ability=>String(ability.value)===String(value))?.label||String(value)),
         date:row.date,discipline:row.discipline,
         existingAbilityValue:existingValue,
         abilityValue:chosen?.value||'',abilityLabel:chosen?.label||'',
@@ -3252,21 +3254,8 @@
     
         const summary = parseCurrentWeekSummary();
         state.summaries[String(summary.week)] = summary;
-        if ((!state.abilities || !state.abilities.length)) {
-          const abilities = await extractAbilitiesFromPage(state);
-          if (abilities.length) {
-            state.abilities = abilities;
-            appendLog(state, 'Habilidades capturadas na primeira semana com Ciências/Biologia.', {
-              count: state.abilities.length
-            });
-          } else if (summary.abilities?.length) {
-            // fallback antigo (template) - pode vir sem knowledges/methodologies dependendo do encoding
-            state.abilities = summary.abilities;
-            appendLog(state, 'Habilidades capturadas via template (fallback).', {
-              count: state.abilities.length
-            });
-          }
-        }
+        // Opções curriculares extraídas individualmente por aula; não reutilizar
+        // lista de outras turmas nem de outros anos escolares.
     
         appendLog(state, 'Semana mapeada.', {
           week: summary.week,
@@ -3328,6 +3317,9 @@
           </select>
           <div style="font-size:11px;color:#637a8c;margin-top:5px">${escapeHtml(item.stageName||'Etapa não reconhecida')}
             ${item.automaticAllowed?'· Sugestão automática':'· Escolha manual obrigatória'}
+          </div>
+          <div style="font-size:11px;color:#52697a;margin-top:4px">
+            Cinco planos anteriores: ${escapeHtml(item.recentFive?.join(' → ')||'nenhum encontrado')}
           </div>
         </div>`;
       }).join('')}
@@ -3485,8 +3477,26 @@
         if (state.status === 'done' || state.status==='paused') return;
         if (!state.waitingReturn) return;
     
+        const pageError=isSegesFormError();
+        if(pageError){pausePlan(state,'O SEGES devolveu um erro depois do envio: '+pageError);return;}
+        const returnedClass=getCurrentClassroomId();
+        if(returnedClass&&String(returnedClass)!==String(state.classroomId)){
+          pausePlan(state,'O SEGES retornou em outra turma. Salvamento não confirmado.');
+          return;
+        }
         const lastWeek = Number(state.lastAppliedWeek);
         const applying=state.applyWeeks||state.weeks;
+        const sent=applying[state.applyIndex];
+        const freshWeeks=parseWeeksTable();
+        const currentRow=freshWeeks.find(row=>Number(row.week)===lastWeek);
+        if(!currentRow){
+          pausePlan(state,'O plano enviado não aparece na lista atual. Confira o salvamento.');
+          return;
+        }
+        if(sent && /\/new(?:\?|$)/.test(sent.url) && /\/new(?:\?|$)/.test(currentRow.url)){
+          pausePlan(state,'O plano ainda aparece como novo. O salvamento não foi confirmado.');
+          return;
+        }
         const currentIndex = applying.findIndex((item) => item.week === lastWeek);
         const nextIndex = currentIndex + 1;
     
@@ -3721,6 +3731,15 @@
         if (state.status === 'done') {
           return { percent: 100, label: 'Processo concluído', week: 'Todas as semanas previstas' };
         }
+        if(state.status==='review'){
+          const totalClasses=state.batch?.jobs?.length||1, index=state.batch?.index||0;
+          return {percent:Math.round(100*(index+0.5)/totalClasses),
+            label:'Aguardando aprovação · turma '+(index+1)+'/'+totalClasses,
+            week:'Revisar habilidades antes de preencher'};
+        }
+        if(state.status==='paused')
+          return {percent:0,label:'Interrompido: confira o erro',week:'Nenhum envio automático'};
+
         const scanning = state.status === 'scanning';
         const stageWeeks = scanning ? state.weeks : (state.applyWeeks || state.weeks);
         const stageTotal = Math.max(1,stageWeeks.length);
