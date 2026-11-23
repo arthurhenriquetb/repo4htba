@@ -433,7 +433,7 @@ function getExistingFieldsInRow(tr) {
       const existingWeekSkill=summary.rows
         .filter((row)=>row.kind==='science'&&row.existingAbilityValue)
         .map((row)=>getAbility(row.existingAbilityValue)).find(Boolean)||null;
-      const hasBlankScience=summary.rows.some((row)=>row.kind==='science'&&!row.existingAbilityValue);
+      const hasBlankScience=summary.rows.some((row)=>row.kind==='science'&&!row.existingAbilityValue&&!row.existingManualText);
       const chosen=existingWeekSkill||(hasBlankScience?pickAbility():null);
       if(!existingWeekSkill&&chosen){
         const key=String(chosen.value);
@@ -454,6 +454,8 @@ function getExistingFieldsInRow(tr) {
           continue;
         }
         if(row.kind!=='science')continue;
+        // Preservar registros textuais de Ciências já preenchidos.
+        if(row.existingManualText){preserved.manual+=1;continue;}
         const prev=!!row.existingAbilityValue;
         const ability=prev?getAbility(row.existingAbilityValue):chosen;
         if(!ability){
