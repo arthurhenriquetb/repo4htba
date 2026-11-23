@@ -2029,21 +2029,22 @@
       }
     
       function isClassroomsPage() {
-        return !!qsa('a.btn.btn-sm.btn-primary').find((a) => {
-          const href = a.getAttribute('href') || '';
-          return href.includes('/weekly_plans?classroom_id=');
-        });
+        return !qs('#weekly_plan') && !!qsa('a[href*="/weekly_plans?classroom_id="]').length;
       }
     
       function isWeeksPage() {
-        return !!qsa('a.btn.btn-sm.btn-primary').find((a) => {
-          const href = a.getAttribute('href') || '';
-          return href.includes('/weekly_plans/new?classroom_id=') || href.includes('/weekly_plans/') && href.includes('/edit');
-        }) && !qs('#weekly_plan');
+        if (qs('#weekly_plan')) return false;
+        if (location.pathname === '/weekly_plans' &&
+            getUrl(location.href)?.searchParams.has('classroom_id')) return true;
+        return !!qsa('a[href*="/weekly_plans/new"], a[href*="/weekly_plans/"][href*="/edit"]').length;
       }
     
       function isWeekFormPage() {
         return !!qs('#weekly_plan') && !!qs('input[type="submit"][value="Salvar"], input[name="commit"][value="Salvar"]');
+      }
+
+      function isPlannerLandingPage() {
+        return location.pathname.startsWith('/weekly_plans') && !qs('#weekly_plan');
       }
     
       function uniqueBy(items, keyFn) {
@@ -3442,7 +3443,7 @@
           return;
         }
     
-        if (!isWeeksPage() && !isClassroomsPage()) {
+        if (!isPlannerLandingPage()) {
           alert('Abra a lista de turmas ou semanas para continuar.');
           return;
         }
@@ -3492,7 +3493,7 @@
 }
 
     async function openWeekSelectionModal(){
- if(!isWeeksPage()&&!isClassroomsPage())return alert('Abra Planos Semanais, na lista de turmas ou semanas.');
+ if(!isPlannerLandingPage())return alert('Abra Planos Semanais, na lista de turmas ou semanas.');
  qs('#'+CONFIG.modalId)?.remove();
  const modal=document.createElement('div');modal.id=CONFIG.modalId;
  modal.innerHTML=`<div class="vm-modal-box" style="max-width:900px">
@@ -4098,8 +4099,8 @@
         const logs = (state?.logs || []).slice(-CONFIG.panelLogCount).reverse();
         const logVisible = localStorage.getItem(PANEL_LOG_VISIBLE_KEY) === '1';
         const progress = getProgressInfo(state);
-        const canStart = (isWeeksPage() || isClassroomsPage()) && (!state || state.status === 'done');
-        const canResume = (isWeeksPage() || isClassroomsPage()) && !!state && state.version === 3 && state.status !== 'done';
+        const canStart = isPlannerLandingPage() && (!state || state.status === 'done');
+        const canResume = isPlannerLandingPage() && !!state && state.version === 3 && state.status !== 'done';
         const canShowReport = !!state?.reportRows?.length;
     
         panel.innerHTML = `
@@ -4115,7 +4116,7 @@
             </div>
             <div class="vm-actions">
               ${canStart ? '<button class="vm-primary" data-vm-action="start">Preencher planos</button>' : ''}
-              ${(isWeeksPage() || isClassroomsPage()) ? '<button class="vm-secondary" data-vm-action="delete-manager">Gerenciar exclusões</button>' : ''}
+              ${isPlannerLandingPage() ? '<button class="vm-secondary" data-vm-action="delete-manager">Gerenciar exclusões</button>' : ''}
               ${canResume ? '<button class="vm-primary" data-vm-action="resume">Continuar de onde parou</button>' : ''}
               ${canShowReport ? '<button class="vm-secondary" data-vm-action="report">Ver relatório</button>' : ''}
               ${state ? '<button class="vm-secondary" data-vm-action="toggle-log">' + (logVisible ? 'Ocultar log' : 'Mostrar log') + '</button>' : ''}
