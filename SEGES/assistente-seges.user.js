@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      2.1.0
+// @version      2.2.0
 // @description  Assistente modular para validação de faltas e preenchimento de planos semanais; preparado para módulo de notas.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -3292,6 +3292,23 @@
  }
 }
 
+      function pausePlan(state,reason,details={}) {
+  state.status='paused';
+  state.lastError=String(reason||'Falha desconhecida');
+  state.pausedAt=new Date().toISOString();
+  state.waitingReturn=false;
+  appendLog(state,'PROCESSAMENTO INTERROMPIDO: '+state.lastError,details);
+  saveState(state);
+  renderPanel();
+}
+
+      function isSegesFormError() {
+  const messages=qsa('.alert-danger, .alert.alert-error, .invalid-feedback, .has-error .help-block, #error_explanation, .field_with_errors')
+    .filter(el=>isVisibleElement(el))
+    .map(el=>String(el.innerText||el.textContent||'').trim()).filter(Boolean);
+  return messages.join(' | ').slice(0,900);
+}
+
       async function handleScanPage(state) {
         const currentWeek = getCurrentWeekFromForm();
         const currentClassroom=getCurrentClassroomId();
@@ -3339,18 +3356,18 @@
           return;
         }
     
-        state.status = 'applying';
-        state.applyIndex = 0;
-        state.waitingReturn = false;
         buildExecutionPlan(state);
-        if (!state.applyWeeks.length) {
-          appendLog(state,'Esta turma não tem lacunas nas semanas selecionadas.');
+        state.applyIndex=0;
+        state.waitingReturn=false;
+        if(!state.applyWeeks.length){
+          appendLog(state,'Nenhuma lacuna encontrada nas semanas selecionadas.');
           await finishBatchClass(state);
           return;
         }
+        state.status='review';
         saveState(state);
-        await sleep(CONFIG.navigationDelayMs);
-        location.href = state.applyWeeks[0].url;
+        renderPanel();
+        openAbilityReviewModal(state);
       }
     
       async function handleApplyPage(state) {
@@ -3401,7 +3418,8 @@
     
         state.waitingReturn = true;
         state.lastAppliedWeek = currentWeek;
-        appendLog(state, 'Semana preenchida. Enviando formulário.', { week: currentWeek });
+        state.status='saving';
+        appendLog(state,'Enviando formulário UMA VEZ; aguardando retorno.',{week:currentWeek});
         saveState(state);
     
         await sleep(CONFIG.saveDelayMs);
@@ -3414,7 +3432,7 @@
       }
     
       async function continueFromWeeksPage(state) {
-        if (state.status === 'done') return;
+        if (state.status === 'done' || state.status==='paused') return;
         if (!state.waitingReturn) return;
     
         const lastWeek = Number(state.lastAppliedWeek);
@@ -3422,8 +3440,13 @@
         const currentIndex = applying.findIndex((item) => item.week === lastWeek);
         const nextIndex = currentIndex + 1;
     
-        state.waitingReturn = false;
-        state.applyIndex = nextIndex;
+        if(currentIndex<0||currentIndex!==state.applyIndex){
+          pausePlan(state,'Retorno de semana incompatível. Operação interrompida.',{lastWeek,currentIndex});
+          return;
+        }
+        state.waitingReturn=false;
+        state.applyIndex=nextIndex;
+        state.status='applying';
         saveState(state);
     
         if (nextIndex >= applying.length) {
@@ -3465,6 +3488,10 @@
           return;
         }
     
+        if (state.status === 'saving'){
+          pausePlan(state,'Não houve confirmação de salvamento; revise manualmente.');
+          return;
+        }
         if (state.status === 'applying') {
           if (state.waitingReturn) {
             await continueFromWeeksPage(state);
@@ -3486,7 +3513,7 @@
     function createBatchClassState(batch){
  const job=batch.jobs[batch.index];
  if(!job?.weeks?.length)throw Error('Turma sem semanas.');
- return {version:3,status:'scanning',startedAt:new Date().toISOString(),finishedAt:null,
+ return {version:4,status:'scanning',startedAt:new Date().toISOString(),finishedAt:null,
   classroomId:job.id,classroomName:job.name,weeks:job.weeks,selectedWeeks:job.selectedWeeks,
   scanIndex:0,applyIndex:0,waitingReturn:false,lastAppliedWeek:null,
   summaries:{},abilities:[],executionPlan:{},reportRows:[],computed:{},logs:[],batch};
@@ -3616,7 +3643,7 @@
     
       function getSummaryText(state) {
         if (!state) return 'Nenhuma automação em andamento.';
-        if (state.version !== 3 && state.status !== 'done') {
+        if (state.version !== 4 && state.status !== 'done') {
           return 'Execução anterior incompatível: use Parar e limpar para iniciar novamente.';
         }
     
@@ -3626,6 +3653,9 @@
         if (state.status === 'applying') {
           return `Aplicando preenchimento ${state.applyIndex}/${(state.applyWeeks || state.weeks).length}`;
         }
+        if (state.status === 'review') return 'Aguardando sua conferência das habilidades antes do preenchimento.';
+        if (state.status === 'saving') return 'Salvamento enviado; aguardando retorno do SEGES.';
+        if (state.status === 'paused') return 'Interrompido: '+(state.lastError||'verifique o log');
         if (state.status === 'done') {
           return state.batch ? 'Concluído: '+state.batch.jobs.length+' turma(s); '+(state.computed?.totalFilledWeeks||0)+' semana(s) com lacunas.' :
             `Concluído. Semanas com lacunas processadas: ${state.computed?.weeksToFill ?? state.weeks.length}`;
@@ -4099,8 +4129,8 @@
         const logs = (state?.logs || []).slice(-CONFIG.panelLogCount).reverse();
         const logVisible = localStorage.getItem(PANEL_LOG_VISIBLE_KEY) === '1';
         const progress = getProgressInfo(state);
-        const canStart = isPlannerLandingPage() && (!state || state.status === 'done');
-        const canResume = isPlannerLandingPage() && !!state && state.version === 3 && state.status !== 'done';
+        const canStart = isPlannerLandingPage() && (!state || ['done','paused','review'].includes(state.status) || state.version!==4);
+        const canResume = isPlannerLandingPage() && !!state && state.version === 4 && ['scanning','applying'].includes(state.status);
         const canShowReport = !!state?.reportRows?.length;
     
         panel.innerHTML = `
@@ -4117,6 +4147,7 @@
             <div class="vm-actions">
               ${canStart ? '<button class="vm-primary" data-vm-action="start">Preencher planos</button>' : ''}
               ${isPlannerLandingPage() ? '<button class="vm-secondary" data-vm-action="delete-manager">Gerenciar exclusões</button>' : ''}
+              ${state?.status==='review' ? '<button class="vm-primary" data-vm-action="review">Revisar habilidades</button>' : ''}
               ${canResume ? '<button class="vm-primary" data-vm-action="resume">Continuar de onde parou</button>' : ''}
               ${canShowReport ? '<button class="vm-secondary" data-vm-action="report">Ver relatório</button>' : ''}
               ${state ? '<button class="vm-secondary" data-vm-action="toggle-log">' + (logVisible ? 'Ocultar log' : 'Mostrar log') + '</button>' : ''}
@@ -4149,6 +4180,11 @@
             return;
           }
     
+          if (action === 'review') {
+            const currentState=loadState();
+            if(currentState?.status==='review') openAbilityReviewModal(currentState);
+            return;
+          }
           if (action === 'report') {
             const currentState = loadState();
             if (currentState) openReportModal(currentState);
@@ -4295,7 +4331,7 @@
         const state = loadState();
         if (!state) return;
         // A estrutura do plano mudou: não retomar uma execução da versão anterior.
-        if (state.version !== 3 && state.status !== 'done') {
+        if (state.version !== 4 && state.status !== 'done') {
           renderPanel();
           return;
         }
@@ -4311,20 +4347,31 @@
             return;
           }
     
-          if (state.status === 'applying' && isWeekFormPage()) {
+          if(state.status==='saving'){
+            if(isWeekFormPage()){
+              pausePlan(state,'O SEGES retornou ao formulário. '+(isSegesFormError()||'Salvamento não confirmado.'),{
+                week:state.lastAppliedWeek
+              });
+              return;
+            }
+            if(isWeeksPage()){
+              await continueFromWeeksPage(state);
+              return;
+            }
+            pausePlan(state,'Retorno do SEGES não reconhecido. Confira o último plano.');
+            return;
+          }
+          if(state.status==='review'){
+            openAbilityReviewModal(state);
+            return;
+          }
+          if(state.status==='applying'&&isWeekFormPage()){
             await handleApplyPage(state);
             return;
           }
-    
-          if (state.status === 'applying' && isWeeksPage()) {
-            await continueFromWeeksPage(state);
-          }
         } catch (error) {
-          appendLog(state, 'Automação interrompida por erro.', { error: error.message });
-          saveState(state);
-          renderPanel();
-          alert(`A automação foi interrompida: ${error.message}`);
-          throw error;
+          pausePlan(state,'Erro de execução: '+error.message,{stack:String(error.stack||'').slice(0,1000)});
+          alert('Operação interrompida sem novas tentativas: '+error.message);
         }
       }
     
