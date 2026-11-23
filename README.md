@@ -40,20 +40,40 @@ O script executa ações em registros oficiais. Confira o relatório e verifique
 
 Versão original preservada em [SEGES/arquivo/validacao-automatica-v6.1-original.js](SEGES/arquivo/validacao-automatica-v6.1-original.js), apenas como arquivo histórico. Não instale as duas versões simultaneamente.
 
-## Plano Semanal — preenchimento automático v1.4.0
+## Plano Semanal — preenchimento seletivo e gerenciador de exclusões v1.6.0
 
-**Script para instalar:** [SEGES/plano-semanal.user.js](SEGES/plano-semanal.user.js)
+**Instalar:** [SEGES/plano-semanal.user.js](SEGES/plano-semanal.user.js)
 
-- Conserva a distribuição de habilidades de Ciências/Biologia e os textos predefinidos para disciplinas específicas;
-- Conserva a retomada da automação e o relatório exportável em CSV/JSON;
-- Exibe a turma pelo nome, se o próprio SEGES disponibilizar esse dado; caso contrário, exibe o identificador (ID);
-- Exibe barra de progresso em duas fases: mapeamento das semanas (0–50%) e preenchimento (50–100%);
-- Permite mover o painel pelo cabeçalho, lembrando a posição entre páginas;
-- Permite mostrar/ocultar os últimos eventos do log e exportar o histórico completo como TXT;
-- Restringe a execução ao domínio oficial `seges.sedu.es.gov.br`.
+### Preencher apenas as lacunas
 
-**Instalação:** no Tampermonkey, crie um script novo, copie o conteúdo do arquivo [plano-semanal.user.js](SEGES/plano-semanal.user.js), salve com **Ctrl+S** e desative a versão antiga desse script. O script aparece nas páginas de planos semanais do SEGES.
+1. Abra o SEGES na **lista de semanas da turma**.
+2. No painel do script, clique em **Selecionar semanas**.
+3. Marque as semanas que deseja completar (ou use **Todas**, **Nenhuma**, **Só semanas sem plano**).
+4. Clique em **Mapear e completar selecionadas**.
+5. O script examina **todas as semanas da turma** para identificar habilidades já registradas, mas só gera complementos para as semanas selecionadas.
+6. Para as disciplinas textuais, não substitui textos preenchidos. Para Ciências/Biologia, preserva habilidades registradas e tenta completar apenas objetos e metodologias ausentes. Sem habilidade compatível, registra a ocorrência no log e não inventa uma correspondência.
 
-**Atenção:** o indicador conta semanas processadas em cada fase; não mede o sucesso da gravação no servidor. O relatório reúne instruções planejadas, devendo ser conferido no SEGES. A sintaxe JavaScript foi validada e as contas de progresso foram testadas, mas não houve teste na sessão autenticada do sistema.
+O algoritmo distribui habilidades disponíveis priorizando as menos usadas, com menor repetição entre semanas. A ordem curricular serve de desempate. As aulas já registradas não são eliminadas, e as semanas sem lacunas são ignoradas durante a aplicação.
 
-**Cópia da versão recebida:** [SEGES/arquivo/plano-semanal-v1.3.2-original.user.js](SEGES/arquivo/plano-semanal-v1.3.2-original.user.js).
+### Excluir planos de várias turmas
+
+1. Abra o menu **Planos Semanais** no SEGES.
+2. Clique em **Gerenciar exclusões** no painel.
+3. Marque uma ou mais turmas e clique em **Consultar semanas selecionadas**.
+4. Marque individualmente os planos existentes que deseja remover.
+5. Clique em **Excluir planos marcados** e digite a confirmação exata exigida na tela.
+
+O script **não inventa o endereço da operação de exclusão**: antes de cada tentativa, procura um formulário ou comando `DELETE` existente no HTML do próprio SEGES, confirma que pertence ao registro escolhido e usa a sessão autenticada. Depois, consulta novamente a lista para verificar a remoção. Se a interface não expuser um comando compatível, **não exclui** e informa a falha. Se o servidor responder mas a alteração não puder ser verificada, registra como **não confirmada**, nunca como sucesso. O histórico dessa operação pode ser exportado em TXT.
+
+### Recursos preservados
+
+- Painel arrastável, com posição lembrada ao navegar;
+- Turma e semana atual;
+- Barra de progresso em duas etapas (mapeamento e aplicação);
+- Log expansível e exportação TXT;
+- Retomada automática e relatório CSV/JSON;
+- Textos pedagógicos das disciplinas e lógica de seleção de campos do SEGES.
+
+**Limitações:** o programa depende dos elementos HTML e dos comandos disponíveis para a conta autenticada no SEGES. Foi verificada a sintaxe do JavaScript e o cálculo de distribuição em cenários simulados. **Ainda não houve teste de preenchimento ou exclusão no ambiente real.** Revise cuidadosamente uma turma e poucas semanas antes do uso amplo, especialmente porque exclusões são irreversíveis.
+
+**Versão original enviada:** [SEGES/arquivo/plano-semanal-v1.3.2-original.user.js](SEGES/arquivo/plano-semanal-v1.3.2-original.user.js). Também é possível recuperar a versão 1.4.0 pelo histórico de commits do GitHub.
