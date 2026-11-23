@@ -61,6 +61,8 @@ Para selecionar várias turmas:
 
 Depois de clicar em **Salvar**, o script registra que o envio foi realizado e **não volta a clicar em Salvar na mesma semana**. Se o SEGES permanecer no formulário, apresentar um erro, redirecionar de maneira inesperada ou não confirmar o retorno, a automação fica **interrompida**, com a mensagem do erro no painel e no log. Também existe um limite de espera para impedir insistência sem fim.
 
+O botão **Parar e limpar** agora registra um pedido de cancelamento que é verificado durante a execução, inclusive entre aulas e **antes de enviar o formulário**. Dessa forma, um processamento anterior não deverá continuar gravando depois de você interrompê-lo. O pedido também é isolado por identificação de execução para impedir que uma rotina antiga se misture a uma nova.
+
 **Importante:** uma interrupção não significa que o registro não tenha sido salvo. Confira o SEGES antes de repetir a operação. Para iniciar uma execução nova após um erro, volte à lista de Planos Semanais e use **Preencher planos** (ou **Parar e limpar** para remover a execução antiga). A versão 2.2 não retoma estados de execução das versões anteriores.
 
 O programa tenta preservar conteúdos e habilidades preexistentes; substituições exigem confirmação. O preenchimento percorre as turmas em sequência, com barra de progresso e relatório por turma.
