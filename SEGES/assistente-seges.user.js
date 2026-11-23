@@ -2199,7 +2199,7 @@
     
       function parseStage(abilityLabel) {
   const raw=String(abilityLabel||'').toUpperCase().replace(/\s/g,'');
-  const grade=raw.match(/EF(0[6-9])CI/);
+  const grade=raw.match(/EF(0[1-9])CI/);
   if(grade)return {stage:'fundamental',grade:Number(grade[1])};
   if(/EM13(?:CNT|LGG|CHS|MAT)/.test(raw))return {stage:'medio',grade:null};
   return {stage:'unknown',grade:null};
@@ -2236,8 +2236,8 @@
   return Array.from(selected.values());
 }
 
-      function filterCompatibleAbilities(choices,className) {
-  const detected=identifyClassStage(className);
+      function filterCompatibleAbilities(choices,className,forcedStage=null) {
+  const detected=forcedStage||identifyClassStage(className);
   const all=(choices||[]).map(item=>({...item,detectedStage:parseStage(item.label)}));
   const known=all.filter(item=>item.detectedStage.stage!=='unknown');
   const stages=new Set(known.map(x=>x.detectedStage.stage+(x.detectedStage.grade||'')));
@@ -2342,7 +2342,7 @@
     const instructions=[];
     plans[String(summary.week)]={week:summary.week,instructions};
     const firstEligible=rows.find(row=>row.kind==='science'&&!row.existingAbilityValue&&!row.existingManualText);
-    const filtered=firstEligible ? filterCompatibleAbilities(firstEligible.abilityChoices,state.classroomName) : null;
+    const filtered=firstEligible ? filterCompatibleAbilities(firstEligible.abilityChoices,state.classroomName,state.classStage) : null;
     const recommended=latestExisting
       ? (filtered?.choices||[]).find(item=>String(item.value)===latestExisting)||null
       : filtered?.automaticAllowed ? proposeFromRecentFive(history,filtered.choices) : null;
@@ -2360,7 +2360,7 @@
       }
       if(row.kind!=='science')continue;
       if(row.existingManualText){preserved++;continue;}
-      const compatible=filterCompatibleAbilities(row.abilityChoices,state.classroomName);
+      const compatible=filterCompatibleAbilities(row.abilityChoices,state.classroomName,state.classStage);
       const existingValue=String(row.existingAbilityValue||'');
       let candidate=compatible.choices.find(item=>String(item.value)===existingValue)||
         (compatible.automaticAllowed ? compatible.choices.find(item=>String(item.value)===weekProposedValue) : null);
@@ -3584,7 +3584,7 @@
  const job=batch.jobs[batch.index];
  if(!job?.weeks?.length)throw Error('Turma sem semanas.');
  return {version:4,status:'scanning',startedAt:new Date().toISOString(),finishedAt:null,
-  classroomId:job.id,classroomName:job.name,weeks:job.weeks,selectedWeeks:job.selectedWeeks,
+  classroomId:job.id,classroomName:job.name,classStage:job.classStage||null,weeks:job.weeks,selectedWeeks:job.selectedWeeks,
   scanIndex:0,applyIndex:0,waitingReturn:false,lastAppliedWeek:null,
   summaries:{},abilities:[],executionPlan:{},reportRows:[],computed:{},logs:[],batch};
 }
@@ -3650,6 +3650,15 @@
     }
     groupsBox.innerHTML=groups.map(g=>`<section data-class-weeks="${escapeHtml(g.classroom.id)}" style="margin:10px 0;border:1px solid #ddd;border-radius:8px;padding:8px">
       <b>${escapeHtml(g.classroom.name)} — ${g.weeks.length} semanas</b>
+      <label style="display:block;margin:7px 0;font-size:12px">Etapa/ano desta turma:
+        <select data-class-stage="${escapeHtml(g.classroom.id)}" style="padding:6px;border:1px solid #ccd5e0;border-radius:6px">
+          <option value="">Detectar automaticamente (se possível)</option>
+          ${Array.from({length:9},(_,i)=>`<option value="fundamental:${i+1}">${i+1}º ano do Fundamental</option>`).join('')}
+          <option value="medio:1">1ª série do Ensino Médio</option>
+          <option value="medio:2">2ª série do Ensino Médio</option>
+          <option value="medio:3">3ª série do Ensino Médio</option>
+        </select>
+      </label>
       <div><button type="button" data-week-action="all">Todas</button>
       <button type="button" data-week-action="new">Sem plano</button>
       <button type="button" data-week-action="none">Nenhuma</button></div>
@@ -3664,14 +3673,19 @@
    const jobs=groups.map(g=>{
     const section=Array.from(groupsBox.querySelectorAll('[data-class-weeks]')).find(x=>x.dataset.classWeeks===g.classroom.id);
     const selectedWeeks=Array.from(section?.querySelectorAll('[data-week]:checked')||[]).map(x=>Number(x.dataset.week));
-    return {...g.classroom,weeks:g.weeks,selectedWeeks};
+    const choice=section?.querySelector('[data-class-stage]')?.value||'';
+    const [stage,rawGrade]=choice.split(':');
+    const classStage=stage&&rawGrade?{stage,grade:Number(rawGrade)}:null;
+    return {...g.classroom,weeks:g.weeks,selectedWeeks,classStage};
    }).filter(j=>j.selectedWeeks.length);
    if(!jobs.length)return alert('Marque ao menos uma semana.');
    const old=loadState();
    if(old&&old.status!=='done'&&!confirm('Interromper a execução anterior para iniciar uma nova?'))return;
    const batch={jobs,index:0,results:[]};
    const state=createBatchClassState(batch);
-   appendLog(state,'Turmas e semanas selecionadas.',{jobs:jobs.map(j=>({name:j.name,weeks:j.selectedWeeks}))});
+   appendLog(state,'Turmas, etapas e semanas selecionadas.',{jobs:jobs.map(j=>({
+     name:j.name,weeks:j.selectedWeeks,stage:j.classStage||'detecção automática'
+   }))});
    saveState(state);modal.remove();renderPanel();location.href=state.weeks[0].url;
   }
  };
