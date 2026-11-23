@@ -1865,6 +1865,7 @@
       'use strict';
     
       const STORAGE_KEY = 'vm_plano_semanal_automacao_v1';
+      const STOP_KEY = 'vm_seges_plans_cancelled_v2';
       const REPORT_WINDOW_KEY = 'vm_plano_semanal_report_open';
       const PANEL_POSITION_KEY = 'vm_plano_semanal_panel_position';
       const PANEL_LOG_VISIBLE_KEY = 'vm_plano_semanal_panel_log_visible';
@@ -1987,6 +1988,7 @@
       }
     
       function clearState() {
+        localStorage.setItem(STOP_KEY,'1');
         localStorage.removeItem(STORAGE_KEY);
         localStorage.removeItem(REPORT_WINDOW_KEY);
       }
@@ -3239,6 +3241,15 @@
   renderPanel();
 }
 
+      function assertPlanActive(state) {
+  const current=loadState();
+  if(localStorage.getItem(STOP_KEY)==='1'||!current||
+     (state.runId&&current.runId!==state.runId)||
+     String(current.classroomId)!==String(state.classroomId)||
+     current.status==='paused')
+    throw Error('Execução cancelada ou substituída pelo usuário.');
+}
+
       function isSegesFormError() {
   const messages=qsa('.alert-danger, .alert.alert-error, .invalid-feedback, .has-error .help-block, #error_explanation, .field_with_errors')
     .filter(el=>isVisibleElement(el))
@@ -3271,7 +3282,7 @@
         saveState(state);
     
         await sleep(CONFIG.scanDelayMs);
-    
+        assertPlanActive(state);
         state.scanIndex += 1;
         if (state.scanIndex < state.weeks.length) {
           saveState(state);
@@ -3435,6 +3446,7 @@
         saveState(state);
     
         for (const instruction of plan.instructions) {
+          assertPlanActive(state);
           const rowElement = rows[instruction.rowIndex];
           if (!rowElement) {
             pausePlan(state,'Aula não encontrada: semana '+currentWeek+', linha '+(instruction.rowIndex+1));
@@ -3451,6 +3463,7 @@
           try {
             await applyInstructionToRow(state, rowElement, instruction);
             await sleep(CONFIG.applyDelayMs);
+            assertPlanActive(state);
           } catch (error) {
             appendLog(state, `Falha ao aplicar instrução na semana ${currentWeek}.`, {
               instruction,
@@ -3468,6 +3481,7 @@
         saveState(state);
     
         await sleep(CONFIG.saveDelayMs);
+        assertPlanActive(state);
         const beforeSaveError=isSegesFormError();
         if(beforeSaveError){pausePlan(state,'Validação do SEGES: '+beforeSaveError);return;}
         const saveButton = qs('input[type="submit"][value="Salvar"], input[name="commit"][value="Salvar"]');
@@ -3583,7 +3597,7 @@
     function createBatchClassState(batch){
  const job=batch.jobs[batch.index];
  if(!job?.weeks?.length)throw Error('Turma sem semanas.');
- return {version:4,status:'scanning',startedAt:new Date().toISOString(),finishedAt:null,
+ return {version:4,status:'scanning',runId:batch.runId,startedAt:new Date().toISOString(),finishedAt:null,
   classroomId:job.id,classroomName:job.name,classStage:job.classStage||null,weeks:job.weeks,selectedWeeks:job.selectedWeeks,
   scanIndex:0,applyIndex:0,waitingReturn:false,lastAppliedWeek:null,
   summaries:{},abilities:[],executionPlan:{},reportRows:[],computed:{},logs:[],batch};
@@ -3681,11 +3695,12 @@
    if(!jobs.length)return alert('Marque ao menos uma semana.');
    const old=loadState();
    if(old&&old.status!=='done'&&!confirm('Interromper a execução anterior para iniciar uma nova?'))return;
-   const batch={jobs,index:0,results:[]};
+   const batch={jobs,index:0,results:[],runId:Date.now().toString(36)+'-'+Math.random().toString(36).slice(2)};
    const state=createBatchClassState(batch);
    appendLog(state,'Turmas, etapas e semanas selecionadas.',{jobs:jobs.map(j=>({
      name:j.name,weeks:j.selectedWeeks,stage:j.classStage||'detecção automática'
    }))});
+   localStorage.removeItem(STOP_KEY);
    saveState(state);modal.remove();renderPanel();location.href=state.weeks[0].url;
   }
  };
@@ -4463,6 +4478,8 @@
             return;
           }
         } catch (error) {
+          if(localStorage.getItem(STOP_KEY)==='1'||!loadState()||
+             (state.runId&&loadState()?.runId!==state.runId))return;
           pausePlan(state,'Erro de execução: '+error.message,{stack:String(error.stack||'').slice(0,1000)});
           alert('Operação interrompida sem novas tentativas: '+error.message);
         }
