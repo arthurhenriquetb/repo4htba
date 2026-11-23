@@ -2191,6 +2191,67 @@
       return {existingAbilityValue:values[0]||'',existingKnowledgeCount:knowledgeCount,existingMethodologyCount:methodologyCount,existingEvaluation:evaluation};
     }
     
+      function parseStage(abilityLabel) {
+  const raw=String(abilityLabel||'').toUpperCase().replace(/\s/g,'');
+  const grade=raw.match(/EF(0[6-9])CI/);
+  if(grade)return {stage:'fundamental',grade:Number(grade[1])};
+  if(/EM13(?:CNT|LGG|CHS|MAT)/.test(raw))return {stage:'medio',grade:null};
+  return {stage:'unknown',grade:null};
+}
+
+      function identifyClassStage(className) {
+  const name=String(className||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  let match=name.match(/(?:^|[\s_-])([6-9])\s*(?:[º°ª]|o)\s*\d?/i)||
+    name.match(/(?:^|[\s_-])([6-9])\s*(?:ano|serie)\b/i);
+  if(match)return {stage:'fundamental',grade:Number(match[1])};
+  match=name.match(/(?:^|[\s_-])([1-3])\s*(?:[ªº°a]|o)?\s*(?:serie|ano)\b/i);
+  if(match)return {stage:'medio',grade:Number(match[1])};
+  return null;
+}
+
+      function extractAbilityOptionsForRow(row) {
+  const template=parseAbilityOptionsFromRow(row);
+  const blocks=getVisibleStructuredBlocks(row);
+  const live=blocks.flatMap(block=>{
+    const select=qs('.structured-weekly-plan-id-select',block);
+    return Array.from(select?.options||[]).filter(opt=>opt.value).map(opt=>({
+      value:String(opt.value),label:String(opt.textContent||'').trim(),
+      knowledges:parseJsonArrayMaybe(opt.getAttribute('data-knowledges')||opt.dataset.knowledges),
+      methodologies:parseJsonArrayMaybe(opt.getAttribute('data-methodologies')||opt.dataset.methodologies),
+      descriptors:parseJsonArrayMaybe(opt.getAttribute('data-descriptors')||opt.dataset.descriptors)
+    }));
+  });
+  const selected=new Map();
+  for(const ability of [...template,...live]) {
+    if(!ability.value||!ability.label)continue;
+    const older=selected.get(ability.value);
+    if(!older || (!older.knowledges?.length && ability.knowledges.length)) selected.set(ability.value,ability);
+  }
+  return Array.from(selected.values());
+}
+
+      function filterCompatibleAbilities(choices,className) {
+  const detected=identifyClassStage(className);
+  const all=(choices||[]).map(item=>({...item,detectedStage:parseStage(item.label)}));
+  const known=all.filter(item=>item.detectedStage.stage!=='unknown');
+  const stages=new Set(known.map(x=>x.detectedStage.stage+(x.detectedStage.grade||'')));
+  let expected=detected;
+  if(!expected&&stages.size===1&&known.length===all.length) {
+    expected=known[0].detectedStage; // inferir somente se todos os códigos tiverem a mesma etapa
+  }
+  if(!expected)return {choices:all,automaticAllowed:false,stageName:'Etapa não identificada; seleção manual obrigatória'};
+  const accepted=all.filter(item=>{
+    const stage=item.detectedStage;
+    if(stage.stage!==expected.stage)return false;
+    if(expected.stage==='fundamental'&&expected.grade!==stage.grade)return false;
+    return true;
+  });
+  return {
+    choices:accepted,automaticAllowed:accepted.length>0,
+    stageName:expected.stage==='medio'?'Ensino Médio':'Fundamental '+expected.grade+'º ano'
+  };
+}
+
       function parseCurrentWeekSummary() {
         const week = getCurrentWeekFromForm();
         const rows = qsa('#weekly_plan tr.by-curriculum-discipline').map((tr, index) => {
@@ -2218,6 +2279,7 @@
             manualProfile,
             hasManual: !!manualTextarea,
             existingManualText: String(manualTextarea?.value || '').trim(),
+            abilityChoices: kind==='science' ? extractAbilityOptionsForRow(tr) : [],
             ...getExistingFieldsInRow(tr)
           };
         });
@@ -2240,155 +2302,109 @@
         };
       }
     
+            function proposeFromRecentFive(previous, options) {
+  const history=(previous||[]).slice(-5).filter(Boolean).map(String);
+  const valid=options||[];
+  if(!valid.length)return null;
+  if(!history.length)return valid[0];
+  const last=history[history.length-1];
+  const index=valid.findIndex(item=>String(item.value)===last);
+  if(index<0)return null; // Nunca recomeçar ao perder a habilidade anterior
+  const repetitions=history.filter(value=>value===last).length;
+  if(repetitions<3)return valid[index];
+  return valid[Math.min(index+1,valid.length-1)]; // A última é permanente
+}
+
       function buildExecutionPlan(state) {
-        const allSummaries=state.weeks.map((item)=>state.summaries[String(item.week)]).filter(Boolean);
-        const selected=new Set((state.selectedWeeks||state.weeks.map((item)=>item.week)).map(Number));
-        const abilities=uniqueBy(state.abilities||[],(ability)=>String(ability.value));
-        const used=new Map(abilities.map((ability)=>[String(ability.value),0]));
-        const plans={};
-        const reports=[];
-        const preserved={manual:0,structured:0};
-        let lastAbility='';
-        let lastIndex=-1;
-        for(const summary of allSummaries){
-          const usedInWeek=new Set(summary.rows
-            .filter((row)=>row.kind==='science'&&row.existingAbilityValue)
-            .map((row)=>String(row.existingAbilityValue)));
-          for(const value of usedInWeek)used.set(value,(used.get(value)||0)+1);
-        }
-        const getAbility=(value)=>abilities.find((a)=>String(a.value)===String(value))||null;
-        function pickAbility(){
-          if(!abilities.length)return null;
-          const minimum=Math.min(...abilities.map((ability)=>used.get(String(ability.value))||0));
-          for(let offset=1;offset<=abilities.length;offset++){
-            const index=(lastIndex+offset)%abilities.length;
-            const ability=abilities[index];
-            if((used.get(String(ability.value))||0)===minimum && (abilities.length===1 || String(ability.value)!==lastAbility)){
-              lastIndex=index;
-              lastAbility=String(ability.value);
-              return ability;
-            }
-          }
-          for(let offset=1;offset<=abilities.length;offset++){
-            const index=(lastIndex+offset)%abilities.length;
-            const ability=abilities[index];
-            if((used.get(String(ability.value))||0)===minimum){
-              lastIndex=index;
-              lastAbility=String(ability.value);
-              return ability;
-            }
-          }
-          return null;
-        }
-        for(const summary of allSummaries){
-          if(!selected.has(Number(summary.week)))continue;
-          const instructions=[];
-          plans[String(summary.week)]={week:summary.week,instructions};
-          const existingWeekSkill=summary.rows
-            .filter((row)=>row.kind==='science'&&row.existingAbilityValue)
-            .map((row)=>getAbility(row.existingAbilityValue)).find(Boolean)||null;
-          const hasBlankScience=summary.rows.some((row)=>row.kind==='science'&&!row.existingAbilityValue&&!row.existingManualText);
-          const chosen=existingWeekSkill||(hasBlankScience?pickAbility():null);
-          if(!existingWeekSkill&&chosen){
-            const key=String(chosen.value);
-            used.set(key,(used.get(key)||0)+1);
-          }
-          if(existingWeekSkill)lastAbility=String(existingWeekSkill.value);
-      
-          for(const row of summary.rows){
-            if(row.kind==='practice'||row.manualProfile){
-              if(row.existingManualText){preserved.manual+=1;continue;}
-              const profile=row.manualProfile||getManualDisciplineProfile(row.discipline);
-              const manualText=row.kind==='practice'?CONFIG.practiceText:(profile?.manualText||'');
-              if(!manualText)continue;
-              instructions.push({rowIndex:row.rowIndex,kind:row.kind,date:row.date,discipline:row.discipline,manualText});
-              reports.push({week:summary.week,date:row.date,discipline:row.discipline,
-                kind:row.kind==='practice'?'Prática Experimental':(profile?.reportKind||row.discipline),
-                ability:'',knowledge:'',methodologies:'',evaluation:'Não',manualText});
-              continue;
-            }
-            if(row.kind!=='science')continue;
-            // Preservar registros textuais de Ciências já preenchidos.
-            if(row.existingManualText){preserved.manual+=1;continue;}
-            const prev=!!row.existingAbilityValue;
-            const ability=prev?getAbility(row.existingAbilityValue):chosen;
-            if(!ability){
-              appendLog(state,'Habilidade indisponível para completar uma aula; registro preservado.',{
-                week:summary.week,row:row.rowIndex+1,previous:row.existingAbilityValue||''
-              });
-              continue;
-            }
-            const knowledgeFilled=!!row.existingKnowledgeCount;
-            const methodFilled=!!row.existingMethodologyCount;
-            const isEvaluation=row.existingEvaluation==='true';
-            if(prev && knowledgeFilled && (methodFilled||isEvaluation)){
-              preserved.structured+=1;
-              continue;
-            }
-            const position=instructions.filter((item)=>item.kind==='science'&&item.abilityValue===String(ability.value)).length;
-            const knowledges=ability.knowledges||[];
-            const methods=ability.methodologies||[];
-            const preferences=position===0
-              ?['Aula expositiva/dialogada','Aula dialogada','Aula expositiva']
-              :position===1
-                ?['Resolução de exercícios','Resolução de problemas']
-                :position%3===2
-                  ?['Mapa Mental']
-                  :['Aula expositiva/dialogada','Resolução de exercícios','Mapa Mental'];
-            const method=findPreferredMethod(methods,preferences)||methods[0]||null;
-            const instruction={
-              rowIndex:row.rowIndex,kind:'science',discipline:row.discipline,date:row.date,
-              abilityValue:String(ability.value),abilityLabel:ability.label,
-              knowledge:knowledges.length?knowledges[position%knowledges.length]:'',
-              methodologies:method?[method]:[],evaluation:false,previouslySelected:prev,
-              weekForReport:summary.week
-            };
-            instructions.push(instruction);
-            reports.push({week:summary.week,date:row.date,discipline:row.discipline,
-              kind:prev?'Ciências/Biologia (completar)':'Ciências/Biologia',
-              ability:ability.label,knowledge:instruction.knowledge,
-              methodologies:instruction.methodologies.join(' | '),evaluation:'Não',manualText:''});
-          }
-        }
-        // A avaliação sugerida recai sobre a última aula nova de cada bloco
-        // consecutivo de habilidades, sem alterar indicadores preexistentes.
-        let pending=[];
-        let previousValue='';
-        function finishBlock(){
-          const last=[...pending].reverse().find((item)=>!item.previouslySelected);
-          if(last){
-            last.evaluation=true;
-            last.methodologies=[];
-            const report=reports.find((row)=>row.week===last.weekForReport &&
-              row.date===last.date&&row.discipline===last.discipline&&row.ability===last.abilityLabel);
-            if(report){report.evaluation='Sim';report.methodologies='';}
-          }
-          pending=[];
-        }
-        for(const week of state.weeks){
-          const plan=plans[String(week.week)];
-          if(!plan){finishBlock();previousValue='';continue;}
-          for(const instr of plan.instructions.filter((item)=>item.kind==='science')){
-            if(previousValue&&previousValue!==instr.abilityValue)finishBlock();
-            pending.push(instr);
-            previousValue=instr.abilityValue;
-          }
-        }
-        finishBlock();
-      
-        state.executionPlan=plans;
-        state.reportRows=reports;
-        state.applyWeeks=state.weeks.filter((week)=>(plans[String(week.week)]?.instructions.length||0)>0);
-        state.computed={
-          abilityCount:abilities.length,totalWeeks:state.weeks.length,
-          selectedWeeks:selected.size,weeksToFill:state.applyWeeks.length,
-          preserved,skillUsage:Array.from(used.entries()).map(([value,weeks])=>({ability:getAbility(value)?.label||value,weeks}))
-        };
-        appendLog(state,'Leitura concluída: serão preenchidas apenas as lacunas encontradas.',state.computed);
-        return state;
+  const summaries=state.weeks.map(item=>state.summaries[String(item.week)]).filter(Boolean);
+  const selected=new Set((state.selectedWeeks||[]).map(Number));
+  const plans={};
+  const reports=[];
+  const history=[];
+  const skipped=[];
+  let preserved=0;
+  for(const summary of summaries) {
+    const rows=summary.rows||[];
+    const selectedWeek=selected.has(Number(summary.week));
+    const existingScience=rows.filter(row=>row.kind==='science'&&row.existingAbilityValue);
+    const latestExisting=existingScience.length ?
+      String(existingScience[existingScience.length-1].existingAbilityValue) : '';
+    if(!selectedWeek) {
+      if(latestExisting)history.push(latestExisting);
+      continue;
+    }
+    const instructions=[];
+    plans[String(summary.week)]={week:summary.week,instructions};
+    const firstEligible=rows.find(row=>row.kind==='science'&&!row.existingAbilityValue&&!row.existingManualText);
+    const filtered=firstEligible ? filterCompatibleAbilities(firstEligible.abilityChoices,state.classroomName) : null;
+    const recommended=latestExisting
+      ? (filtered?.choices||[]).find(item=>String(item.value)===latestExisting)||null
+      : filtered?.automaticAllowed ? proposeFromRecentFive(history,filtered.choices) : null;
+    let weekProposedValue=String(latestExisting||recommended?.value||'');
+    for(const row of rows) {
+      if(row.kind==='practice'||row.manualProfile){
+        if(row.existingManualText){preserved++;continue;}
+        const profile=row.manualProfile||getManualDisciplineProfile(row.discipline);
+        const manualText=row.kind==='practice'?CONFIG.practiceText:(profile?.manualText||'');
+        if(!manualText)continue;
+        instructions.push({kind:row.kind,rowIndex:row.rowIndex,date:row.date,discipline:row.discipline,manualText});
+        reports.push({week:summary.week,rowIndex:row.rowIndex,date:row.date,discipline:row.discipline,
+          kind:'Texto predefinido',ability:'',knowledge:'',methodologies:'',evaluation:'Não',manualText});
+        continue;
       }
-    
-        function initializeSelect2IfNeeded(select) {
+      if(row.kind!=='science')continue;
+      if(row.existingManualText){preserved++;continue;}
+      const compatible=filterCompatibleAbilities(row.abilityChoices,state.classroomName);
+      const existingValue=String(row.existingAbilityValue||'');
+      let candidate=compatible.choices.find(item=>String(item.value)===existingValue)||
+        (compatible.automaticAllowed ? compatible.choices.find(item=>String(item.value)===weekProposedValue) : null);
+      if(!existingValue&&!candidate&&compatible.automaticAllowed){
+        candidate=proposeFromRecentFive(history,compatible.choices);
+      }
+      const abilityValue=existingValue||String(candidate?.value||'');
+      const chosen=compatible.choices.find(item=>String(item.value)===abilityValue);
+      if(!chosen && existingValue) {
+        // Não modificar um preenchimento existente que não corresponda à etapa.
+        skipped.push({week:summary.week,rowIndex:row.rowIndex,reason:'Habilidade existente fora das opções compatíveis.'});
+        preserved++;
+        continue;
+      }
+      if(!compatible.choices.length) {
+        skipped.push({week:summary.week,rowIndex:row.rowIndex,reason:'Sem habilidades compatíveis com a etapa da aula.'});
+        continue;
+      }
+      const instruction={
+        kind:'science',rowIndex:row.rowIndex,weekForReport:summary.week,
+        date:row.date,discipline:row.discipline,
+        existingAbilityValue:existingValue,
+        abilityValue:chosen?.value||'',abilityLabel:chosen?.label||'',
+        availableAbilities:compatible.choices,
+        stageName:compatible.stageName,
+        automaticAllowed:compatible.automaticAllowed,
+        knowledge:chosen?.knowledges?.[0]||'',
+        methodologies:chosen?.methodologies?.length?[chosen.methodologies[0]]:[],
+        evaluation:false,previouslySelected:!!existingValue,
+        alreadyComplete:!!(existingValue&&row.existingKnowledgeCount &&
+          (row.existingMethodologyCount||row.existingEvaluation==='true'))
+      };
+      instructions.push(instruction);
+      reports.push({week:summary.week,rowIndex:row.rowIndex,date:row.date,discipline:row.discipline,
+        kind:'Ciências/Biologia',ability:instruction.abilityLabel,
+        knowledge:instruction.knowledge,methodologies:instruction.methodologies.join(' | '),
+        evaluation:'Não',manualText:''});
+    }
+    if(weekProposedValue)history.push(weekProposedValue);
+  }
+  state.executionPlan=plans;
+  state.reportRows=reports;
+  state.applyWeeks=state.weeks.filter(week=>plans[String(week.week)]?.instructions.length);
+  state.computed={weeksToFill:state.applyWeeks.length,selectedWeeks:selected.size,
+    skipped,alreadyFilled:preserved,lastFiveHistory:history.slice(-5)};
+  appendLog(state,'Sugestões preparadas a partir dos cinco planos anteriores; revisão obrigatória.',state.computed);
+  return state;
+}
+
+      function initializeSelect2IfNeeded(select) {
         if (!select || !window.jQuery || !window.jQuery.fn || !window.jQuery.fn.select2) return;
         const $select = window.jQuery(select);
         if ($select.data('select2')) return;
