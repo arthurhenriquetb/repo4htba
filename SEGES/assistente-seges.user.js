@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      2.0.0
+// @version      2.1.0
 // @description  Assistente modular para validação de faltas e preenchimento de planos semanais; preparado para módulo de notas.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -2148,8 +2148,8 @@
         }
       }
     
-      function parseWeeksTable() {
-        const rows = qsa('table.table.table-striped tbody tr.middle');
+      function parseWeeksTable(root = document) {
+        const rows = qsa('table.table.table-striped tbody tr.middle', root);
         return rows
           .map((tr) => {
             const cells = tr.querySelectorAll('td');
@@ -3450,61 +3450,104 @@
       }
     
     
-    function openWeekSelectionModal() {
-      if (!isWeeksPage()) return alert('Abra a lista de semanas da turma.');
-      const weeks = parseWeeksTable();
-      if(!weeks.length) return alert('Nenhuma semana encontrada.');
-      qs('#'+CONFIG.modalId)?.remove();
-      const modal=document.createElement('div');
-      modal.id=CONFIG.modalId;
-      modal.innerHTML=`
-        <div class="vm-modal-box" style="max-width:720px">
-          <h3>Selecionar semanas para preencher</h3>
-          <p style="font-size:13px">Serão lidas todas as semanas para identificar habilidades já utilizadas. Somente as semanas marcadas receberão complementos.</p>
-          <div class="vm-modal-actions">
-            <button type="button" data-pick="all">Todas</button>
-            <button type="button" data-pick="none">Nenhuma</button>
-            <button type="button" data-pick="new">Só semanas sem plano</button>
-          </div>
-          <div style="max-height:42vh;overflow:auto;padding:8px;border:1px solid #ddd">
-            ${weeks.map((w)=>`
-            <label style="display:flex;gap:8px;align-items:center;padding:7px;border-bottom:1px solid #eee">
-              <input type="checkbox" data-vm-week="${w.week}" checked>
-              <b>Semana ${w.week}</b><span>${escapeHtml(w.period||'')} · ${escapeHtml(w.statusLabel||'')}</span>
-            </label>`).join('')}
-          </div>
-          <div class="vm-modal-actions" style="margin-top:12px">
-            <button class="vm-primary" type="button" data-start-selected>Mapear e completar selecionadas</button>
-            <button class="vm-secondary" type="button" data-cancel>Cancelar</button>
-          </div>
-        </div>`;
-      modal.onclick=(event)=>{
-        if(event.target===modal || event.target.closest('[data-cancel]')){modal.remove();return;}
-        const pick=event.target.closest('[data-pick]')?.dataset.pick;
-        if(pick){
-          modal.querySelectorAll('[data-vm-week]').forEach((checkbox)=>{
-            const week=weeks.find((w)=>w.week===Number(checkbox.dataset.vmWeek));
-            checkbox.checked=pick==='all'||(pick==='new' && /\/new(?:\?|$)/.test(week?.url||''));
-          });
-        }
-        if(event.target.closest('[data-start-selected]')){
-          const selected=Array.from(modal.querySelectorAll('[data-vm-week]:checked')).map((c)=>Number(c.dataset.vmWeek));
-          if(!selected.length)return alert('Selecione pelo menos uma semana.');
-          const existing=loadState();
-          if(existing && existing.status!=='done')return alert('Há uma execução em andamento. Termine-a ou use Parar e limpar.');
-          const state=buildStateFromCurrentWeeksPage();
-          state.selectedWeeks=selected;
-          appendLog(state,'Automação iniciada com semanas escolhidas.',{selectedWeeks:selected,readWeeks:state.weeks.length});
-          saveState(state);
-          modal.remove();
-          renderPanel();
-          location.href=state.weeks[0].url;
-        }
-      };
-      document.body.appendChild(modal);
+    function createBatchClassState(batch){
+ const job=batch.jobs[batch.index];
+ if(!job?.weeks?.length)throw Error('Turma sem semanas.');
+ return {version:3,status:'scanning',startedAt:new Date().toISOString(),finishedAt:null,
+  classroomId:job.id,classroomName:job.name,weeks:job.weeks,selectedWeeks:job.selectedWeeks,
+  scanIndex:0,applyIndex:0,waitingReturn:false,lastAppliedWeek:null,
+  summaries:{},abilities:[],executionPlan:{},reportRows:[],computed:{},logs:[],batch};
+}
+
+    async function openWeekSelectionModal(){
+ if(!isWeeksPage()&&!isClassroomsPage())return alert('Abra Planos Semanais, na lista de turmas ou semanas.');
+ qs('#'+CONFIG.modalId)?.remove();
+ const modal=document.createElement('div');modal.id=CONFIG.modalId;
+ modal.innerHTML=`<div class="vm-modal-box" style="max-width:900px">
+   <h3>Preencher planos — escolher turmas e semanas</h3>
+   <p>Selecione as turmas e depois marque as semanas de cada uma. As demais semanas também serão lidas para equilibrar as habilidades.</p>
+   <div data-classes>Consultando turmas...</div>
+   <div class="vm-modal-actions" style="margin-top:10px">
+     <button type="button" data-pick="load" class="vm-primary">Mostrar semanas</button>
+     <button type="button" data-pick="all-classes" class="vm-secondary">Todas as turmas</button>
+     <button type="button" data-pick="close" class="vm-secondary">Fechar</button>
+   </div>
+   <div data-week-groups></div>
+   <p data-message style="font-size:12px;color:#526577"></p>
+   <button type="button" data-pick="start" class="vm-primary" disabled>Iniciar preenchimento selecionado</button>
+ </div>`;
+ document.body.appendChild(modal);
+ const box=qs('[data-classes]',modal),groupsBox=qs('[data-week-groups]',modal),
+  message=qs('[data-message]',modal),go=qs('[data-pick="start"]',modal);
+ let classes=[],groups=[],busy=false;
+ try{
+  const doc=isClassroomsPage()?document:await readSegesHtml('/weekly_plans');
+  classes=listClassrooms(doc);
+  const current=getCurrentClassroomId();
+  if(!classes.length&&isWeeksPage()&&current)classes=[{id:current,name:getClassroomDisplay(null),url:location.href}];
+  if(!classes.length)throw Error('Turmas não encontradas. Abra o menu Planos Semanais.');
+  box.innerHTML='<b>Turmas</b><div style="max-height:140px;overflow:auto">'+classes.map(c=>
+   `<label style="display:block;padding:4px"><input type="checkbox" data-class="${escapeHtml(c.id)}" ${c.id===current?'checked':''}> ${escapeHtml(c.name)}</label>`).join('')+'</div>';
+  if(classes.length===1)qs('[data-class]',box).checked=true;
+  message.textContent=classes.length+' turmas disponíveis.';
+ }catch(error){box.textContent='Erro: '+error.message;}
+ modal.onclick=async(ev)=>{
+  if(ev.target===modal&&!busy){modal.remove();return;}
+  const action=ev.target.closest('[data-pick]')?.dataset.pick;
+  const option=ev.target.closest('[data-week-action]')?.dataset.weekAction;
+  if(action==='close'){if(!busy)modal.remove();return;}
+  if(action==='all-classes'){box.querySelectorAll('[data-class]').forEach(c=>{c.checked=true;});return;}
+  if(busy)return;
+  if(option){
+   const section=ev.target.closest('[data-class-weeks]'),g=groups.find(x=>x.classroom.id===section?.dataset.classWeeks);
+   section?.querySelectorAll('[data-week]').forEach(c=>{
+     const w=g?.weeks.find(x=>x.week===Number(c.dataset.week));
+     c.checked=option==='all'||(option==='new'&&/\/new(?:\?|$)/.test(w?.url||''));
+   });return;
+  }
+  if(action==='load'){
+   const ids=new Set(Array.from(box.querySelectorAll('[data-class]:checked')).map(c=>c.dataset.class));
+   if(!ids.size)return alert('Selecione ao menos uma turma.');
+   busy=true;groups=[];go.disabled=true;groupsBox.textContent='Lendo semanas...';
+   const failures=[];
+   try{
+    for(const classroom of classes.filter(x=>ids.has(x.id))){
+     try{
+      const doc=classroom.url===location.href&&isWeeksPage()?document:await readSegesHtml(classroom.url);
+      const weeks=parseWeeksTable(doc);
+      if(weeks.length)groups.push({classroom,weeks});else failures.push(classroom.name+': sem semanas reconhecidas');
+     }catch(e){failures.push(classroom.name+': '+e.message);}
     }
-    
-      function buildStateFromCurrentWeeksPage() {
+    groupsBox.innerHTML=groups.map(g=>`<section data-class-weeks="${escapeHtml(g.classroom.id)}" style="margin:10px 0;border:1px solid #ddd;border-radius:8px;padding:8px">
+      <b>${escapeHtml(g.classroom.name)} — ${g.weeks.length} semanas</b>
+      <div><button type="button" data-week-action="all">Todas</button>
+      <button type="button" data-week-action="new">Sem plano</button>
+      <button type="button" data-week-action="none">Nenhuma</button></div>
+      <div style="max-height:170px;overflow:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))">
+      ${g.weeks.map(w=>`<label style="font-size:12px;padding:3px">
+       <input type="checkbox" data-week="${w.week}" checked> Semana ${w.week} · ${escapeHtml(w.period||'')}</label>`).join('')}</div></section>`).join('');
+    message.textContent=groups.length+' turmas carregadas. '+failures.join(' | ');
+    go.disabled=!groups.length;
+   }finally{busy=false;}return;
+  }
+  if(action==='start'){
+   const jobs=groups.map(g=>{
+    const section=Array.from(groupsBox.querySelectorAll('[data-class-weeks]')).find(x=>x.dataset.classWeeks===g.classroom.id);
+    const selectedWeeks=Array.from(section?.querySelectorAll('[data-week]:checked')||[]).map(x=>Number(x.dataset.week));
+    return {...g.classroom,weeks:g.weeks,selectedWeeks};
+   }).filter(j=>j.selectedWeeks.length);
+   if(!jobs.length)return alert('Marque ao menos uma semana.');
+   const old=loadState();
+   if(old&&old.status!=='done'&&!confirm('Interromper a execução anterior para iniciar uma nova?'))return;
+   const batch={jobs,index:0,results:[]};
+   const state=createBatchClassState(batch);
+   appendLog(state,'Turmas e semanas selecionadas.',{jobs:jobs.map(j=>({name:j.name,weeks:j.selectedWeeks}))});
+   saveState(state);modal.remove();renderPanel();location.href=state.weeks[0].url;
+  }
+ };
+}
+
+    function buildStateFromCurrentWeeksPage() {
         const parsedWeeks = parseWeeksTable();
         const weeks = CONFIG.maxWeeksPerRun ? parsedWeeks.slice(0, CONFIG.maxWeeksPerRun) : parsedWeeks;
         const classroomId = getCurrentClassroomId() || getUrl(weeks[0]?.url || '')?.searchParams.get('classroom_id') || null;
@@ -4057,11 +4100,7 @@
             return;
           }
           if (action === 'start') {
-            if (isClassroomsPage()) {
-              alert('O seletor de turmas e semanas está disponível na próxima versão do módulo. Por enquanto abra as semanas da turma.');
-              return;
-            }
-            openWeekSelectionModal();
+            await openWeekSelectionModal();
             return;
           }
     
