@@ -3252,8 +3252,48 @@
         return state.executionPlan?.[String(currentWeek)] || null;
       }
     
+      async function finishBatchClass(state){
+ const batch=state.batch;
+ if(!batch){
+  state.status='done';state.finishedAt=new Date().toISOString();
+  saveState(state);renderPanel();if(state.reportRows?.length)openReportModal(state);return;
+ }
+ const job=batch.jobs[batch.index];
+ if(!job)throw Error('Não foi possível identificar a turma atual do lote.');
+ batch.results.push({
+  classroomId:job.id,classroomName:job.name,
+  weeksScanned:state.weeks.length,selectedWeeks:state.selectedWeeks.length,
+  weeksCompleted:state.applyWeeks?.length||0,filledRows:state.reportRows?.length||0,
+  rows:(state.reportRows||[]).map((row)=>({...row,classroomName:job.name,classroomId:job.id}))
+ });
+ if(batch.index+1<batch.jobs.length){
+  batch.index++;
+  const next=createBatchClassState(batch);
+  appendLog(next,'Iniciando próxima turma.',{current:batch.index+1,total:batch.jobs.length,name:next.classroomName});
+  saveState(next);renderPanel();location.href=next.weeks[0].url;return;
+ }
+ state.status='done';state.finishedAt=new Date().toISOString();
+ state.reportRows=batch.results.flatMap((entry)=>entry.rows);
+ state.computed={...state.computed,totalClasses:batch.jobs.length,
+  scannedWeeks:batch.results.reduce((n,r)=>n+r.weeksScanned,0),
+  totalFilledWeeks:batch.results.reduce((n,r)=>n+r.weeksCompleted,0),
+  totalFilledRows:batch.results.reduce((n,r)=>n+r.filledRows,0)};
+ appendLog(state,'Processamento das turmas finalizado.',{
+  turmas:state.computed.totalClasses,semanasComLacunas:state.computed.totalFilledWeeks,linhasPropostas:state.computed.totalFilledRows
+ });
+ saveState(state);renderPanel();
+ if(state.reportRows.length){
+  localStorage.removeItem(REPORT_WINDOW_KEY);openReportModal(state);
+ }else{
+  alert('Leitura concluída: nenhuma lacuna foi identificada nas semanas selecionadas.');
+ }
+}
+
       async function handleScanPage(state) {
         const currentWeek = getCurrentWeekFromForm();
+        const currentClassroom=getCurrentClassroomId();
+        if(currentClassroom && String(currentClassroom)!==String(state.classroomId))
+          throw Error('Turma diferente da esperada; execução interrompida.');
         const expectedWeek = state.weeks[state.scanIndex]?.week;
         if (currentWeek !== expectedWeek) {
           appendLog(state, 'Semana aberta não corresponde à esperada no escaneamento.', { currentWeek, expectedWeek });
@@ -3301,11 +3341,8 @@
         state.waitingReturn = false;
         buildExecutionPlan(state);
         if (!state.applyWeeks.length) {
-          state.status = 'done';
-          appendLog(state, 'Nenhuma lacuna foi encontrada nas semanas escolhidas.');
-          saveState(state);
-          renderPanel();
-          alert('Leitura concluída: não há lacunas detectadas nas semanas escolhidas.');
+          appendLog(state,'Esta turma não tem lacunas nas semanas selecionadas.');
+          await finishBatchClass(state);
           return;
         }
         saveState(state);
@@ -3315,6 +3352,9 @@
     
       async function handleApplyPage(state) {
         const currentWeek = getCurrentWeekFromForm();
+        const currentClassroom=getCurrentClassroomId();
+        if(currentClassroom && String(currentClassroom)!==String(state.classroomId))
+          throw Error('Turma diferente da esperada; execução interrompida.');
         const expectedWeek = (state.applyWeeks || state.weeks)[state.applyIndex]?.week;
         if (currentWeek !== expectedWeek) {
           appendLog(state, 'Semana aberta não corresponde à esperada na aplicação.', { currentWeek, expectedWeek });
@@ -3370,7 +3410,7 @@
         saveButton.click();
       }
     
-      function continueFromWeeksPage(state) {
+      async function continueFromWeeksPage(state) {
         if (state.status === 'done') return;
         if (!state.waitingReturn) return;
     
@@ -3384,20 +3424,15 @@
         saveState(state);
     
         if (nextIndex >= applying.length) {
-          state.status = 'done';
-          state.finishedAt = new Date().toISOString();
-          appendLog(state, 'Processo concluído.');
-          saveState(state);
-          localStorage.setItem(REPORT_WINDOW_KEY, '1');
-          renderPanel();
-          openReportModal(state);
+          appendLog(state,'Fim das semanas com lacunas desta turma.');
+          await finishBatchClass(state);
           return;
         }
     
         location.href = applying[nextIndex].url;
       }
     
-      function resumeAutomation(state) {
+      async function resumeAutomation(state) {
         if (!state || state.status === 'done') return;
     
         if (isWeekFormPage()) {
@@ -3405,8 +3440,8 @@
           return;
         }
     
-        if (!isWeeksPage()) {
-          alert('Abra a página de semanas da turma para continuar a automação.');
+        if (!isWeeksPage() && !isClassroomsPage()) {
+          alert('Abra a lista de turmas ou semanas para continuar.');
           return;
         }
     
@@ -3419,6 +3454,7 @@
             state.waitingReturn = false;
             saveState(state);
             if (state.applyWeeks?.length) location.href = state.applyWeeks[0].url;
+            else await finishBatchClass(state);
             return;
           }
           saveState(state);
@@ -3428,19 +3464,13 @@
     
         if (state.status === 'applying') {
           if (state.waitingReturn) {
-            continueFromWeeksPage(state);
+            await continueFromWeeksPage(state);
             return;
           }
     
           const nextWeek = (state.applyWeeks || state.weeks)[state.applyIndex];
           if (!nextWeek) {
-            state.status = 'done';
-            state.finishedAt = new Date().toISOString();
-            appendLog(state, 'Processo concluído na retomada.');
-            saveState(state);
-            localStorage.setItem(REPORT_WINDOW_KEY, '1');
-            renderPanel();
-            openReportModal(state);
+            await finishBatchClass(state);
             return;
           }
     
@@ -3553,7 +3583,7 @@
         const classroomId = getCurrentClassroomId() || getUrl(weeks[0]?.url || '')?.searchParams.get('classroom_id') || null;
     
         return {
-          version: 2,
+          version: 3,
           status: 'scanning',
           startedAt: new Date().toISOString(),
           finishedAt: null,
@@ -3583,8 +3613,8 @@
     
       function getSummaryText(state) {
         if (!state) return 'Nenhuma automação em andamento.';
-        if (state.version !== 2 && state.status !== 'done') {
-          return 'Execução antiga: use Parar e limpar antes de iniciar a versão 1.6.';
+        if (state.version !== 3 && state.status !== 'done') {
+          return 'Execução anterior incompatível: use Parar e limpar para iniciar novamente.';
         }
     
         if (state.status === 'scanning') {
@@ -4062,7 +4092,7 @@
         const logVisible = localStorage.getItem(PANEL_LOG_VISIBLE_KEY) === '1';
         const progress = getProgressInfo(state);
         const canStart = (isWeeksPage() || isClassroomsPage()) && (!state || state.status === 'done');
-        const canResume = isWeeksPage() && !!state && state.version === 2 && state.status !== 'done';
+        const canResume = (isWeeksPage() || isClassroomsPage()) && !!state && state.version === 3 && state.status !== 'done';
         const canShowReport = !!state?.reportRows?.length;
     
         panel.innerHTML = `
@@ -4106,7 +4136,7 @@
     
           if (action === 'resume') {
             const currentState = loadState();
-            if (currentState) resumeAutomation(currentState);
+            if (currentState) await resumeAutomation(currentState);
             return;
           }
     
@@ -4253,7 +4283,7 @@
         const state = loadState();
         if (!state) return;
         // A estrutura do plano mudou: não retomar uma execução da versão anterior.
-        if (state.version !== 2 && state.status !== 'done') {
+        if (state.version !== 3 && state.status !== 'done') {
           renderPanel();
           return;
         }
@@ -4275,7 +4305,7 @@
           }
     
           if (state.status === 'applying' && isWeeksPage()) {
-            continueFromWeeksPage(state);
+            await continueFromWeeksPage(state);
           }
         } catch (error) {
           appendLog(state, 'Automação interrompida por erro.', { error: error.message });
