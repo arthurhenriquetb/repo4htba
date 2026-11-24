@@ -2359,7 +2359,7 @@ function iniciarModuloPlanos() {
         const realExisting=habilidadeRecente(form);
         const first=form.rows.find(r=>r.kind==='science'&&!r.existingSkill&&!r.existingText);
         const proposal=realExisting||sugerirHabilidade(recent,first?.opts||[],cls.stage);
-        let representative=proposal||'';
+        let representative=realExisting||'';
         for(const row of form.rows){
           if(row.kind==='other'||(row.kind==='manual'&&row.existingText))continue;
           // Aulas com registro existente também aparecem na revisão;
