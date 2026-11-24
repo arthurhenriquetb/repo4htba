@@ -2106,7 +2106,9 @@ function iniciarModuloPlanos() {
         if(!item||(item.existing&&!showExisting))return '<td>·</td>';
         return `<td title="${html(cls.name)} · ${html(item.period)}"><input type="checkbox" data-cell-class="${html(cls.id)}" data-cell-week="${w}" ${selected.has(w)?'checked':''}></td>`;
       }).join('');
-      return `<tr><td><strong>${html(cls.name)}</strong></td>
+      return `<tr><td><label style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+          <input type="checkbox" data-class-toggle="${html(cls.id)}" ${selected.size?'checked':''}>
+          <strong>${html(cls.name)}</strong></label></td>
         <td><select id="seges-stage-${html(cls.id)}" data-class-stage="${html(cls.id)}" title="Ano ou série" style="width:125px">${etapaOpcoes(quadroAtual?.stages?.get(cls.id)||etapaNome(cls.name))}</select></td>
         ${cells}</tr>`;
     }).join('');
@@ -2114,6 +2116,17 @@ function iniciarModuloPlanos() {
     root.innerHTML=`<div class="scroll"><table><thead><tr><th>Turma</th><th>Etapa</th>${header}</tr></thead><tbody>${rows}</tbody></table></div>
       <p class="hint">Marque/desmarque as células. Cada coluna é uma semana, cada linha é uma turma; um ponto significa que não há semana selecionável nesse filtro.</p>`;
     root.onchange=e=>{
+      const toggle=e.target.closest('[data-class-toggle]');
+      if(toggle){
+        const cls=catalogo.find(item=>item.id===toggle.dataset.classToggle);
+        const amount=Number($('#seges-v3-quantity')?.value||2);
+        const weeks=semanasPorTurma.get(cls.id)||[];
+        const latest=Math.max(0,...weeks.filter(w=>w.existing).map(w=>w.week));
+        const upcoming=weeks.filter(w=>!w.existing && w.week>latest).sort((a,b)=>a.week-b.week);
+        const missing=weeks.filter(w=>!w.existing).sort((a,b)=>a.week-b.week);
+        selecionadas.set(cls.id,new Set(toggle.checked?(upcoming.length?upcoming:missing).slice(0,amount).map(w=>w.week):[]));
+        atualizarTabela();return;
+      }
       const cell=e.target.closest('[data-cell-week]');
       if(cell){
         const set=selecionadas.get(cell.dataset.cellClass)||new Set();
@@ -2374,9 +2387,13 @@ function iniciarModuloPlanos() {
     $('#seges-v3-approve').onclick=()=>aprovarEExecutar().catch(falhar);
     root.onchange=e=>{
       const control=e.target.closest('[data-proposal-key]');if(!control)return;
-      quadroAtual.overrides.set(control.dataset.proposalKey,
-        control.type==='checkbox'?(control.checked?'TEXT':''):control.value);
+      const scroller=$('.scroll',root);
+      const previousTop=scroller?.scrollTop||0,previousLeft=scroller?.scrollLeft||0;
+      const key=control.dataset.proposalKey;
+      quadroAtual.overrides.set(key,control.type==='checkbox'?(control.checked?'TEXT':''):control.value);
       mostrarPrevia();
+      const newScroll=$('.scroll',$('#seges-v3-overlay'));
+      if(newScroll){newScroll.scrollTop=previousTop;newScroll.scrollLeft=previousLeft;}
     };
   }
   function abrirTabelaSemRecarregar(){
@@ -2849,6 +2866,13 @@ function iniciarModuloPlanos() {
   }catch(error){falhar(error);}
   finally{if(ativo)encerrarOperacao();}
 }
+  // Eliminar os dados de retomada deixados por versões anteriores.
+  // Esta versão não lê nem grava progresso no navegador.
+  try {
+    ['vm_plano_semanal_automacao_v1','vm_plano_semanal_report_open',
+     'vm_plano_semanal_panel_position','vm_plano_semanal_panel_log_visible']
+      .forEach(key=>localStorage.removeItem(key));
+  } catch (_) {}
   painel();
   if(location.pathname!==BASE)status('Abra a lista de turmas em Planos Semanais para iniciar.');
 }
