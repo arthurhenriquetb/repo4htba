@@ -2390,7 +2390,308 @@ function iniciarModuloPlanos() {
     $('#seges-v3-preview').onclick=()=>prepararPrevia().catch(falhar);
     atualizarTabela();
   }
-  async function aprovarEExecutar() { /*ENGINE_HOOK*/ }
+  async function aprovarEExecutar() {
+  if(ativo)return;
+  const proposal=quadroAtual?.review?.suggested||[];
+  const actions=proposal.filter(item=>item.value && item.value!=='__keep' && (!item.manual||item.row.manualText));
+  const replacements=actions.filter(item=>!item.manual && item.row.existingSkill && item.value!==item.row.existingSkill);
+  if(!actions.length){alert('Nenhum campo foi selecionado para preencher.');return;}
+  const unresolved=proposal.filter(item=>!item.manual&&!item.value&&!item.row.existingSkill);
+  const changedUnknown=actions.filter(item=>!item.manual && item.options.find(o=>o.value===item.value)?.manualOnly);
+  let message='Confirmar '+actions.length+' aula(s) de '+new Set(actions.map(a=>a.cls.id)).size+
+    ' turma(s), distribuídas em '+new Set(actions.map(a=>a.cls.id+':'+a.week.week)).size+' semana(s)?';
+  if(unresolved.length)message+='\n\n'+unresolved.length+' aula(s) ficarão sem preencher porque você não selecionou uma habilidade.';
+  if(replacements.length)message+='\n\nATENÇÃO: '+replacements.length+' habilidade(s) já registradas serão substituídas.';
+  if(changedUnknown.length)message+='\n\nATENÇÃO: '+changedUnknown.length+' habilidade(s) não têm código curricular que confirme a etapa. Você escolheu manualmente.';
+  message+='\n\nEsta operação será executada nesta guia, sem salvar progresso. Fechar a guia ou clicar Parar encerra a automação.';
+  if(!confirm(message))return;
+  iniciarOperacao();
+  const groups=quadroAtual.selected.filter(cls=>actions.some(a=>a.cls.id===cls.id));
+  const byKey=new Map();
+  for(const action of actions){
+    const k=action.cls.id+':'+action.week.week;
+    if(!byKey.has(k))byKey.set(k,{cls:action.cls,week:action.week,items:[]});
+    byKey.get(k).items.push(action);
+  }
+  operacaoAtual={byKey,finished:[],failed:[],startedAt:new Date(),planned:actions.length};
+  progresso={atual:0,total:byKey.size};atualizarProgresso();
+  modal(`<h3>Preenchendo planos aprovados</h3>
+    <p class="hint">A automação está nesta guia. Fechá-la encerra a execução, sem guardar progresso para retomada.</p>
+    <strong id="seges-v3-working">Preparando...</strong>
+    <div style="height:11px;background:#e4ecf2;border-radius:8px;overflow:hidden;margin:12px 0">
+      <div id="seges-v3-working-fill" style="height:100%;width:0;background:#17699e"></div>
+    </div>
+    <div id="seges-v3-message" class="hint"></div>
+    <div class="actions"><button id="seges-v3-stopnow" class="danger">Parar agora</button></div>`);
+  $('#seges-v3-stopnow').onclick=cancelar;
+  try{
+    for(const group of byKey.values()){
+      verificarAtivo();
+      const text=group.cls.name+' · semana '+group.week.week;
+      $('#seges-v3-working').textContent=text;
+      status('Aplicando '+text+' ('+(progresso.atual+1)+'/'+progresso.total+')');
+      await aplicarSemanaAprovada(group);
+      operacaoAtual.finished.push(text);
+      progresso.atual++;atualizarProgresso();
+      const bar=$('#seges-v3-working-fill');if(bar)bar.style.width=Math.round(100*progresso.atual/progresso.total)+'%';
+    }
+    verificarAtivo();
+    ultimoRelatorio={at:new Date(),finished:operacaoAtual.finished.slice(),failed:[],totalLessons:actions.length};
+    status('Concluído: '+operacaoAtual.finished.length+' semana(s) verificadas. O relatório vale apenas para esta guia.');
+    encerrarOperacao();
+    iframe?.remove();iframe=null;
+    const lines=ultimoRelatorio.finished.map(x=>'<li>'+html(x)+'</li>').join('');
+    modal(`<h3>Concluído — planos verificados</h3>
+      <p>O SEGES confirmou os registros listados abaixo. Nada foi guardado como progresso.</p>
+      <div style="max-height:50vh;overflow:auto"><ul>${lines}</ul></div>
+      <div class="actions"><button id="seges-v3-export">Baixar relatório TXT</button>
+        <button id="seges-v3-close">Fechar</button></div>`);
+    $('#seges-v3-export').onclick=()=>baixar('seges-planos-verificados.txt',
+      'Planos verificados\n'+ultimoRelatorio.finished.join('\n')+'\n');
+    $('#seges-v3-close').onclick=fecharModal;
+  }catch(error){
+    if(cancelado)return;
+    const failed=String(error?.message||error);
+    operacaoAtual?.failed.push({reason:failed});
+    status('Interrompido sem novas tentativas: '+failed);
+    encerrarOperacao();
+    iframe?.remove();iframe=null;
+    modal(`<h3>Execução interrompida</h3>
+      <p style="color:#a02f35">${html(failed)}</p>
+      <p class="hint">O último formulário pode ter sido salvo ou recusado. Confira diretamente no SEGES antes de repetir. Sem retomada automática.</p>
+      <p>Semanas verificadas antes da interrupção: ${operacaoAtual?.finished?.length||0}</p>
+      <div class="actions"><button id="seges-v3-export">Baixar log</button><button id="seges-v3-close">Fechar</button></div>`);
+    $('#seges-v3-export').onclick=()=>baixar('seges-erro.txt',linhasLog.join('\n'));
+    $('#seges-v3-close').onclick=fecharModal;
+  }
+}
+
+  function alertaDoSeges(doc) {
+  return $('.alert-danger, .alert.alert-error, #error_explanation, .invalid-feedback',doc)
+    .map(el=>String(el.textContent||'').trim()).filter(Boolean).join(' | ').slice(0,1200);
+}
+
+  function verificarAulasNaoMudaram(group,doc) {
+  const rows=$('#weekly_plan tr.by-curriculum-discipline',doc);
+  if(!rows.length)throw Error('O SEGES não apresentou o formulário da semana.');
+  for(const action of group.items){
+    const original=action.row,actual=rows[original.index];
+    if(!actual)throw Error('Aula '+(original.index+1)+' desapareceu do formulário.');
+    const discipline=String(actual.querySelectorAll('td')[1]?.textContent||'').trim();
+    if(normal(discipline)!==normal(original.discipline))
+      throw Error('A disciplina da aula '+(original.index+1)+' mudou. Nova conferência necessária.');
+    if(!action.manual){
+      const real=opcoesDaAula(actual);
+      if(!real.some(option=>option.value===action.value))
+        throw Error('A habilidade '+action.value+' não consta mais no dropdown da aula '+(original.index+1)+'.');
+      const actualValue=String($('.structured-weekly-plan-id-select',actual)?.value||'');
+      if(actualValue!==original.existingSkill)
+        throw Error('O registro da aula '+(original.index+1)+' mudou depois da revisão.');
+    }
+  }
+}
+
+  async function frameAbrir(href) {
+  verificarAtivo();
+  const url=urlSeges(href);
+  if(!url)throw Error('Endereço de formulário inválido.');
+  if(!iframe){
+    iframe=document.createElement('iframe');
+    iframe.setAttribute('aria-hidden','true');
+    iframe.style.cssText='position:absolute;left:-12000px;top:-12000px;width:1280px;height:960px;opacity:0;pointer-events:none;border:0';
+    document.body.appendChild(iframe);
+  }
+  const frame=iframe;
+  await new Promise((resolve,reject)=>{
+    let timer;
+    const onload=()=>{
+      try{
+        const doc=frame.contentDocument;
+        if(!doc || frame.contentWindow.location.href==='about:blank')return;
+        clearTimeout(timer);frame.removeEventListener('load',onload);resolve();
+      }catch(error){clearTimeout(timer);frame.removeEventListener('load',onload);reject(Error('O SEGES bloqueou o formulário dentro da guia. '+error.message));}
+    };
+    timer=setTimeout(()=>{
+      frame.removeEventListener('load',onload);
+      reject(Error('O formulário não abriu nesta guia. Talvez o SEGES bloqueie iframes; nenhuma gravação foi feita.'));
+    },15000);
+    frame.addEventListener('load',onload);
+    frame.src=url.href;
+  });
+  verificarAtivo();
+  const doc=frame.contentDocument;
+  if(!doc || !$('#weekly_plan',doc)){
+    const message=doc?alertaDoSeges(doc):'';
+    throw Error('Formulário não encontrado após abertura. '+message);
+  }
+  return doc;
+}
+
+  async function esperarElemento(fn,timeoutMs=5000){
+  const began=Date.now();
+  while(Date.now()-began<timeoutMs){
+    verificarAtivo();
+    const value=fn();if(value)return value;
+    await dormir(120);
+  }
+  return null;
+}
+
+  function selecionarExato(select,value,label) {
+  if(!select)throw Error(label+': campo ausente.');
+  const opt=Array.from(select.options||[]).find(opt=>String(opt.value)===String(value));
+  if(!opt)throw Error(label+': opção não disponível no SEGES.');
+  if(select.multiple)Array.from(select.options).forEach(o=>o.selected=o===opt);
+  else select.value=String(value);
+  const view=select.ownerDocument.defaultView;
+  select.dispatchEvent(new view.Event('input',{bubbles:true}));
+  select.dispatchEvent(new view.Event('change',{bubbles:true}));
+  if(view.jQuery){
+    try{
+      const jq=view.jQuery(select);
+      jq.trigger('change');
+      jq.trigger('change.select2');
+    }catch(_){}
+  }
+  if(select.multiple?!Array.from(select.selectedOptions).some(o=>o.value===value):select.value!==String(value))
+    throw Error(label+': o campo rejeitou a seleção.');
+}
+
+  async function escolherDependente(block,selector,candidate,label){
+  if(!candidate)return;
+  const select=await esperarElemento(()=>$ (selector,block),3000);
+  if(!select)throw Error(label+': campo não existe na aula.');
+  const find=()=>Array.from(select.options||[]).find(opt=>
+    String(opt.value)===String(candidate)||normal(opt.textContent)===normal(candidate));
+  const option=await esperarElemento(find,5000);
+  if(!option)throw Error(label+': a opção prevista não apareceu no SEGES.');
+  if(!Array.from(select.selectedOptions||[]).some(opt=>opt.value))selecionarExato(select,option.value,label);
+}
+
+  async function aplicarAulaNoFrame(group,action,doc) {
+  verificarAtivo();
+  const tr=$('#weekly_plan tr.by-curriculum-discipline',doc)[action.row.index];
+  if(action.manual){
+    const field=$('textarea',tr);
+    if(!field)throw Error('Campo de texto ausente: aula '+(action.row.index+1));
+    if(!String(field.value||'').trim()){
+      field.value=action.row.manualText;
+      field.dispatchEvent(new doc.defaultView.Event('input',{bubbles:true}));
+      field.dispatchEvent(new doc.defaultView.Event('change',{bubbles:true}));
+    }
+    return;
+  }
+  const before=action.row.existingSkill||'';
+  let block=$('.structured-weekly-plan-id-select',tr)
+    .map(el=>el.closest('.nested-fields')||el.parentElement)
+    .find(el=>String($('.structured-weekly-plan-id-select',el)?.value||'')===(before||action.value));
+  if(!block && before)throw Error('A habilidade existente não foi localizada na aula '+(action.row.index+1));
+  if(!block){
+    const add=$('.add_fields',tr);
+    if(!add)throw Error('O SEGES não oferece botão para incluir habilidade nesta aula.');
+    const previous=$('.structured-weekly-plan-id-select',tr).length;
+    add.click();
+    block=await esperarElemento(()=>{
+      const all=$('.structured-weekly-plan-id-select',tr);
+      if(all.length<=previous)return null;
+      return all.at(-1).closest('.nested-fields')||all.at(-1).parentElement;
+    },5000);
+    if(!block)throw Error('O SEGES não criou o campo estruturado da aula.');
+  }
+  let selector=$('.structured-weekly-plan-id-select',block);
+  if(!selector)throw Error('Lista curricular ausente na aula.');
+  const old=String(selector.value||'');
+  if(old&&old!==action.value && old!==before)
+    throw Error('Uma habilidade diferente da aprovada está na aula.');
+  if(old!==action.value){
+    selecionarExato(selector,action.value,'Habilidade');
+    await dormir(300);
+  }
+  verificarAtivo();
+  const choice=action.options.find(opt=>opt.value===action.value);
+  if(!choice)throw Error('Habilidade não aprovada na prévia.');
+  if(old&&old!==action.value){
+    for(const key of ['.structured-weekly-plan-knowledges-select','.structured-weekly-plan-methodologies-select']){
+      const field=$(key,block);
+      if(field){
+        Array.from(field.options||[]).forEach(opt=>opt.selected=false);
+        field.dispatchEvent(new doc.defaultView.Event('change',{bubbles:true}));
+      }
+    }
+  }
+  await escolherDependente(block,'.structured-weekly-plan-knowledges-select',choice.knowledges?.[0]||'','Objeto de conhecimento');
+  await escolherDependente(block,'.structured-weekly-plan-methodologies-select',choice.methodologies?.[0]||'','Metodologia');
+  const evaluation=$('.structured-weekly-plan-evaluation-select',block);
+  if(evaluation&&!evaluation.value&&Array.from(evaluation.options||[]).some(o=>o.value==='false'))
+    selecionarExato(evaluation,'false','Avaliação');
+}
+
+  async function clicarSalvarUmaVez(doc) {
+  const save=$('input[type="submit"][value="Salvar"],input[name="commit"][value="Salvar"],button[type="submit"]',doc);
+  if(!save)throw Error('O botão Salvar não foi encontrado. Nenhum envio executado.');
+  const error=alertaDoSeges(doc);
+  if(error)throw Error('O SEGES indica erro antes de salvar: '+error);
+  verificarAtivo();
+  // Registra ouve a navegação ANTES de clicar. Nunca repete o clique.
+  const frame=iframe;
+  const result=new Promise(resolve=>{
+    let done=false;
+    const finish=(outcome)=>{
+      if(done)return;done=true;
+      clearTimeout(timeout);frame.removeEventListener('load',loaded);
+      resolve(outcome);
+    };
+    const loaded=()=>finish({navigated:true});
+    const timeout=setTimeout(()=>finish({navigated:false}),15000);
+    frame.addEventListener('load',loaded);
+  });
+  save.click();
+  const resultValue=await result;
+  verificarAtivo();
+  if(!resultValue.navigated){
+    const current=iframe?.contentDocument;
+    throw Error('O SEGES não confirmou o retorno após Salvar. '+(current?alertaDoSeges(current):'')+
+      ' Confira manualmente; não haverá nova tentativa.');
+  }
+  const current=iframe?.contentDocument;
+  if(!current)throw Error('O SEGES bloqueou o retorno do salvamento.');
+  const resultError=alertaDoSeges(current);
+  if(resultError)throw Error('Erro retornado pelo SEGES: '+resultError);
+}
+
+  async function confirmarRegistro(group) {
+  const list=await buscarPagina(group.cls.url);
+  const refreshed=semanasDisponiveis(list,group.cls).find(item=>item.week===group.week.week);
+  if(!refreshed?.existing)
+    throw Error('A semana '+group.week.week+' ainda aparece sem plano. Salvamento não confirmado.');
+  const saved=await buscarPagina(refreshed.url);
+  const rows=lerAulas(saved,group.cls,refreshed);
+  for(const action of group.items){
+    const row=rows[action.row.index];
+    if(!row)throw Error('A aula não apareceu no plano salvo.');
+    if(action.manual){
+      if(!row.existingText)throw Error('O texto da aula não foi encontrado após salvar.');
+    } else if(row.existingSkill!==action.value){
+      throw Error('O SEGES devolveu outra habilidade para a aula '+(row.index+1)+'.');
+    }
+  }
+}
+
+  async function aplicarSemanaAprovada(group) {
+  const doc=await frameAbrir(group.week.url);
+  verificarAtivo();
+  verificarAulasNaoMudaram(group,doc);
+  const currentError=alertaDoSeges(doc);if(currentError)throw Error('Erro no formulário: '+currentError);
+  for(const action of group.items){
+    verificarAtivo();
+    await aplicarAulaNoFrame(group,action,doc);
+  }
+  verificarAtivo();
+  await clicarSalvarUmaVez(doc);
+  verificarAtivo();
+  await confirmarRegistro(group);
+  log('Salvo e verificado: '+group.cls.name+' · semana '+group.week.week);
+}
   async function abrirExclusoes() { /*DELETE_HOOK*/ }
   painel();
   if(location.pathname!==BASE)status('Abra a lista de turmas em Planos Semanais para iniciar.');
