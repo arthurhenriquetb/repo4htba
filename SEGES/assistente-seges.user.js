@@ -2264,10 +2264,13 @@ function iniciarModuloPlanos() {
     arquivos.set(key,result);
     return result;
   }
+  function temPlano(form) {
+    return !!form?.rows?.some(row=>row.existingSkill||row.existingText);
+  }
   function registroAnterior(cls,week) {
     return (semanasPorTurma.get(cls.id)||[])
       .filter(w=>w.week<week.week && w.existing)
-      .sort((a,b)=>b.week-a.week).slice(0,5);
+      .sort((a,b)=>b.week-a.week);
   }
   async function prepararPrevia() {
     iniciarOperacao();
@@ -2275,26 +2278,46 @@ function iniciarModuloPlanos() {
     if(!selected.length){encerrarOperacao();alert('Marque ao menos uma semana.');return;}
     try {
       $('#seges-v3-preview').disabled=true;
-      // Consultar apenas as semanas escolhidas e as cinco últimas COM plano anteriores a cada uma.
-      const needed=new Map();
-      for(const cls of selected){
-        for(const week of cls.weeks){
-          needed.set(cls.id+':'+week.week,{cls,week});
-          for(const previous of registroAnterior(cls,week))
-            needed.set(cls.id+':'+previous.week,{cls,week:previous});
-        }
-      }
-      progresso={atual:0,total:needed.size};atualizarProgresso();
-      for(const {cls,week} of needed.values()){
+      const chosen=new Map();
+      for(const cls of selected)for(const week of cls.weeks)
+        chosen.set(cls.id+':'+week.week,{cls,week});
+      progresso={atual:0,total:chosen.size};atualizarProgresso();
+      for(const {cls,week} of chosen.values()){
         verificarAtivo();
         await lerSemana(cls,week);
         progresso.atual++;atualizarProgresso();
-        status('Lendo '+cls.name+' · semana '+week.week+' ('+progresso.atual+'/'+needed.size+')');
+        status('Lendo semana escolhida: '+cls.name+' · '+week.week);
       }
+      const warnings=[];
+      // Para cada semana escolhida, olhar somente para trás. Encontrar no máximo
+      // cinco semanas com conteúdo REAL, sem percorrer todos os planos do ano.
+      for(const cls of selected){
+        for(const week of cls.weeks){
+          let found=0,consulted=0;
+          const previous=registroAnterior(cls,week);
+          for(const old of previous){
+            if(found>=5||consulted>=12)break;
+            verificarAtivo();
+            const key=cls.id+':'+old.week;
+            if(!arquivos.has(key))progresso.total++;
+            const form=await lerSemana(cls,old);
+            consulted++;
+            if(temPlano(form))found++;
+            progresso.atual=Math.min(progresso.total,progresso.atual+1);
+            atualizarProgresso();
+            status('Histórico de '+cls.name+': '+found+'/5 semanas com plano (antes da '+week.week+')');
+          }
+          if(found<5&&consulted>=12&&previous.length>consulted)
+            warnings.push(cls.name+' · semana '+week.week+
+              ': foram lidas no máximo 12 semanas anteriores; histórico com '+found+' planos efetivos.');
+        }
+      }
+      progresso.total=progresso.atual;atualizarProgresso();
       quadroAtual.selected=selected;
+      quadroAtual.historyWarnings=warnings;
       quadroAtual.overrides=new Map();
       mostrarPrevia();
-      status('Sugestões preparadas. Nenhum plano foi salvo.');
+      status('Sugestões prontas. Nenhum plano foi salvo.');
     }catch(error){falhar(error);}
     finally {encerrarOperacao();}
   }
@@ -2311,11 +2334,11 @@ function iniciarModuloPlanos() {
   }
   function gerarPropostas() {
     const selected=quadroAtual.selected||[];
-    const suggested=[],warnings=[];
+    const suggested=[],warnings=[...(quadroAtual.historyWarnings||[])];
     for(const cls of selected){
       const timeline=new Map();
       for(const form of arquivos.values()){
-        if(form.cls.id!==cls.id||!form.week.existing)continue;
+        if(form.cls.id!==cls.id||!form.week.existing||!temPlano(form))continue;
         timeline.set(form.week.week,{week:form.week.week,skill:habilidadeRecente(form),hasPlan:true});
       }
       for(const week of cls.weeks){
