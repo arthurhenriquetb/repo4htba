@@ -1900,7 +1900,8 @@ function iniciarModuloPlanos() {
     if(iframe){iframe.remove();iframe=null;}
     if(quadro){quadro.remove();quadro=null;}
     operacaoAtual=null;
-    status('Interrompido. Nada foi guardado para retomada.');
+    status('Interrompido. Nada foi guardado. Recarregue a guia para iniciar outra operação.');
+    atualizarBotoes();
   }
   function log(msg) {
     const linha='['+new Date().toLocaleTimeString('pt-BR')+'] '+msg;
@@ -1920,8 +1921,9 @@ function iniciarModuloPlanos() {
     if(label)label.textContent=valor+'%';
   }
   function iniciarOperacao() {
+    if(cancelado)throw Error('Esta execução foi cancelada. Recarregue a guia antes de iniciar outra.');
     if(ativo)throw Error('Uma operação já está em andamento.');
-    cancelado=false;ativo=true;controller=new AbortController();
+    ativo=true;controller=new AbortController();
     linhasLog=[];progresso={atual:0,total:0};atualizarProgresso();
     atualizarBotoes();
   }
@@ -1931,8 +1933,8 @@ function iniciarModuloPlanos() {
   }
   function atualizarBotoes() {
     const start=$('#seges-v3-open'),del=$('#seges-v3-delete'),stop=$('#seges-v3-stop');
-    if(start)start.disabled=ativo;
-    if(del)del.disabled=ativo;
+    if(start)start.disabled=ativo||cancelado;
+    if(del)del.disabled=ativo||cancelado;
     if(stop)stop.disabled=!ativo;
   }
   function estilos() {
