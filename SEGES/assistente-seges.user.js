@@ -1868,7 +1868,14 @@ function iniciarModuloPlanos() {
   const BASE = '/weekly_plans';
   const CIENCIAS = /CI[ÊE]NCIAS|BIOLOGIA/i;
   const PRATICAS = /PR[ÁA]TICAS?\s+EXPERIMENTA(?:L|IS)/i;
-  const TEXTOS = {}; /*TEXTOS_FIXOS*/
+  const PERFIS = [
+{regex:new RegExp("PR[ÁA]TICAS?\\s+EXPERIMENTA(?:L|IS)",'i'),text:"Aula ministrada com o conteúdo: aplicação de atividades com a metodologia de resolução de problemas e confecção de projetos elaborados em conformidade com o conteúdo ministrado semanalmente, para que os alunos tenham a oportunidade de realizar alguma tarefa ou observar algum experimento que mostre o conteúdo de forma prática e lúdica associado ao cotidiano dos estudantes."},
+{regex:new RegExp("ELETIVAS?",'i'),text:"Eletiva multisseriada ministrada com conteúdo interdisciplinar, visando fortalecer as disciplinas da base curricular (BNCC) por meio de uma abordagem integradora lúdica e em consonância com o Guia de Aprendizagem, avaliações diagnósticas e varal dos sonhos."},
+{regex:new RegExp("PENSAMENTO\\s+CIENT[ÍI]FICO",'i'),text:"Planejamento e execução de materiais didáticos interativos, associados ao material estruturado de pensamento científico, acompanhado da exposição de documentários de divulgação científica."},
+{regex:new RegExp("PROJETO\\s+DE\\s+VIDA",'i'),text:"Aula ministrada para a disciplina de Projeto de Vida, Com o conteúdo Multisseriado e interdisciplinar para fortalecer as disciplinas da base curricular (BNCC) por meio de uma abordagem integradora lúdica e em consonância com o Guia de Aprendizagem, avaliações diagnósticas e varal dos sonhos do projeto de vida dos estudantes."},
+{regex:new RegExp("ESTUDO\\s+ORIENTADO",'i'),text:"Aplicação de atividades enviadas previamente pelos demais professores de outras disciplinas, em consonância com as diretrizes e temáticas dispostas na BNCC e orientações curriculares da SEDU, através da metodologia de resolução de exercícios e estímulo ao protagonismo dos estudantes para resolução das atividades."},
+{regex:new RegExp("PROTAGONISMO|CLUBE",'i'),text:"Aula ministrada para a disciplina de Clube de Protagonismo com conteúdos desenvolvidos de acordo com o Material Estruturado, em consonância com o currículo e varal dos sonhos dos estudantes."}
+];
   let catalogo = [], semanasPorTurma = new Map(), selecionadas = new Map();
   let arquivos = new Map(), substituicoes = new Map();
   let ativo = false, cancelado = false, controller = null, quadro = null, quadroAtual = null;
@@ -2216,11 +2223,15 @@ function iniciarModuloPlanos() {
       const existingText=String(textarea?.value||'').trim();
       const sel=$('.structured-weekly-plan-id-select',tr);
       const existingSkill=String(sel?.value||'').trim();
-      let kind=CIENCIAS.test(discipline)?'science':PRATICAS.test(discipline)?'manual':'other';
-      if(PRATICAS.test(discipline))kind='manual';
-      if(TEXTOS[normal(discipline)])kind='manual';
-      return {index,discipline,date,kind,existingText,existingSkill,
-        opts:kind==='science'?opcoesDaAula(tr):[],manualText:TEXTOS[normal(discipline)]||''};
+      const profile=PERFIS.find(item=>item.regex.test(discipline));
+      const kind=profile?'manual':CIENCIAS.test(discipline)?'science':'other';
+      const selections=(selector)=>$(selector,tr).flatMap(el=>Array.from(el.selectedOptions||[])
+        .filter(opt=>opt.value).map(opt=>String(opt.value)));
+      const hasKnowledge=selections('.structured-weekly-plan-knowledges-select').length>0;
+      const hasMethod=selections('.structured-weekly-plan-methodologies-select').length>0;
+      const evaluation=$('.structured-weekly-plan-evaluation-select',tr)?.value||'';
+      return {index,discipline,date,kind,existingText,existingSkill,hasKnowledge,hasMethod,evaluation,
+        opts:kind==='science'?opcoesDaAula(tr):[],manualText:profile?.text||''};
     });
   }
   function habilidadeRecente(form){
