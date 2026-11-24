@@ -2698,7 +2698,157 @@ function iniciarModuloPlanos() {
   await confirmarRegistro(group);
   log('Salvo e verificado: '+group.cls.name+' · semana '+group.week.week);
 }
-  async function abrirExclusoes() { /*DELETE_HOOK*/ }
+  function identificarExcluir(doc) {
+  const forms=$('form',doc);
+  for(const form of forms){
+    const override=String($('input[name="_method"]',form)?.value||'').toLowerCase();
+    const method=String(form.getAttribute('method')||'GET').toUpperCase();
+    if(override!=='delete'&&method!=='DELETE')continue;
+    const url=urlSeges(form.getAttribute('action')||'');
+    if(!url||!/^\/weekly_plans\/\d+\/?$/.test(url.pathname))continue;
+    const fields=$('input[name]',form)
+      .filter(input=>!input.disabled && (!['checkbox','radio'].includes(input.type)||input.checked))
+      .map(input=>[input.name,input.value]);
+    return {url:url.href,method:method==='DELETE'?'DELETE':'POST',fields,
+      csrf:$('meta[name="csrf-token"]',doc)?.content||''};
+  }
+  for(const link of $('a[data-method],a[data-turbo-method],button[data-method]',doc)){
+    if(String(link.dataset.method||link.getAttribute('data-turbo-method')||'').toLowerCase()!=='delete')continue;
+    const url=urlSeges(link.getAttribute('href')||link.getAttribute('formaction')||'');
+    if(!url||!/^\/weekly_plans\/\d+\/?$/.test(url.pathname))continue;
+    return {url:url.href,method:'DELETE',fields:[],
+      csrf:$('meta[name="csrf-token"]',doc)?.content||''};
+  }
+  return null;
+}
+
+  async function comandoExcluir(week){
+  const rowDoc=new DOMParser().parseFromString('<table><tbody>'+week.rowHtml+'</tbody></table>','text/html');
+  let control=identificarExcluir(rowDoc);
+  if(!control){
+    const detail=await buscarPagina(week.url);
+    control=identificarExcluir(detail);
+  }
+  if(!control)throw Error('O SEGES não apresentou um botão oficial para excluir a semana '+week.week+'.');
+  const actual=urlSeges(control.url)?.pathname.match(/^\/weekly_plans\/(\d+)\/?$/)?.[1];
+  const listed=urlSeges(week.url)?.pathname.match(/^\/weekly_plans\/(\d+)(?:\/edit)?\/?$/)?.[1];
+  if(!actual||actual!==listed)throw Error('O comando de exclusão não corresponde ao plano escolhido.');
+  return control;
+}
+
+  async function executarExclusaoOficial(control){
+  verificarAtivo();
+  const csrf=control.csrf||$('meta[name="csrf-token"]')?.content||'';
+  const fields=new URLSearchParams();
+  for(const [key,value] of control.fields)fields.append(key,value);
+  if(!csrf&&!fields.has('authenticity_token'))throw Error('Token de segurança do SEGES ausente.');
+  const headers={'Accept':'text/html,application/json','X-Requested-With':'XMLHttpRequest'};
+  if(csrf)headers['X-CSRF-Token']=csrf;
+  const options={method:control.method,credentials:'same-origin',signal:controller.signal,redirect:'follow',headers};
+  if(control.method==='POST'){
+    options.body=fields;
+    headers['Content-Type']='application/x-www-form-urlencoded;charset=UTF-8';
+  }
+  const response=await fetch(control.url,options);
+  verificarAtivo();
+  const returned=urlSeges(response.url);
+  if(!response.ok||!returned)throw Error('Falha ou redirecionamento inesperado ao excluir (HTTP '+response.status+').');
+}
+
+  async function verificarExclusao(week,cls){
+  const doc=await buscarPagina(cls.url);
+  if(!$('table.table.table-striped',doc))throw Error('Não encontrei a lista de semanas para verificar a exclusão.');
+  const weeks=semanasDisponiveis(doc,cls);
+  const originalId=urlSeges(week.url)?.pathname.match(/^\/weekly_plans\/(\d+)(?:\/edit)?\/?$/)?.[1];
+  return !weeks.some(w=>w.week===week.week&&w.existing&&
+    urlSeges(w.url)?.pathname.match(/^\/weekly_plans\/(\d+)(?:\/edit)?\/?$/)?.[1]===originalId);
+}
+
+  async function abrirExclusoes() {
+  iniciarOperacao();
+  const root=modal(`<h3>Excluir planos — várias turmas</h3>
+    <p class="hint"><strong>Atenção:</strong> a exclusão é permanente. Marque exatamente os registros existentes que deseja remover.</p>
+    <div id="seges-v3-del-table">Consultando turmas...</div>
+    <p id="seges-v3-message" class="hint"></p>
+    <div class="actions"><button id="seges-v3-del-cancel" class="danger">Cancelar</button>
+      <button id="seges-v3-del-apply" disabled>Excluir planos marcados</button></div>`);
+  $('#seges-v3-del-cancel').onclick=cancelar;
+  const map=new Map();
+  try{
+    const main=location.pathname===BASE&&!location.search?document:await buscarPagina(BASE);
+    const classes=turmasDisponiveis(main);
+    if(!classes.length)throw Error('Nenhuma turma encontrada.');
+    progresso={atual:0,total:classes.length};atualizarProgresso();
+    for(const cls of classes){
+      verificarAtivo();
+      const doc=await buscarPagina(cls.url);
+      map.set(cls.id,{cls,weeks:semanasDisponiveis(doc,cls).filter(w=>w.existing)});
+      progresso.atual++;atualizarProgresso();
+      status('Consultando planos: '+progresso.atual+'/'+classes.length);
+    }
+    const all=[...new Set([...map.values()].flatMap(x=>x.weeks.map(w=>w.week)))].sort((a,b)=>a-b);
+    const rows=[...map.values()].map(({cls,weeks})=>{
+      const weekMap=new Map(weeks.map(w=>[w.week,w]));
+      return `<tr><td><strong>${html(cls.name)}</strong></td>
+        ${all.map(n=>weekMap.has(n)?
+          `<td><input type="checkbox" data-excluir-class="${html(cls.id)}" data-excluir-week="${n}"></td>`:
+          '<td>·</td>').join('')}</tr>`;
+    }).join('');
+    $('#seges-v3-del-table').innerHTML=`<div class="scroll"><table><thead><tr><th>Turma</th>${all.map(n=>`<th>${n}</th>`).join('')}</tr></thead>
+      <tbody>${rows}</tbody></table></div><p class="hint">Somente planos que já existem no SEGES aparecem com caixas de seleção.</p>`;
+    const btn=$('#seges-v3-del-apply');
+    btn.disabled=!all.length;
+    btn.classList.add('danger');
+    encerrarOperacao();
+    btn.onclick=async()=>{
+      const checked=$('[data-excluir-week]:checked',root);
+      if(!checked.length){alert('Marque pelo menos um plano.');return;}
+      const selected=checked.map(el=>{
+        const c=map.get(el.dataset.excluirClass);
+        const w=c?.weeks.find(x=>x.week===Number(el.dataset.excluirWeek));
+        return w?{cls:c.cls,week:w}:null;
+      }).filter(Boolean);
+      const phrase='EXCLUIR '+selected.length;
+      const answer=prompt('Você selecionou '+selected.length+' planos de '+new Set(selected.map(x=>x.cls.id)).size+
+        ' turma(s).\n\nA exclusão é permanente. Digite exatamente '+phrase+' para confirmar:');
+      if(answer!==phrase)return;
+      iniciarOperacao();
+      progresso={atual:0,total:selected.length};atualizarProgresso();
+      btn.disabled=true;
+      const results=[];
+      try{
+        for(const {cls,week} of selected){
+          verificarAtivo();
+          status('Excluindo '+cls.name+' · semana '+week.week);
+          const command=await comandoExcluir(week);
+          await executarExclusaoOficial(command);
+          if(!await verificarExclusao(week,cls))
+            throw Error('O SEGES respondeu, mas não foi possível confirmar a exclusão desta semana. Confira manualmente.');
+          results.push(cls.name+' · semana '+week.week);
+          progresso.atual++;atualizarProgresso();
+          log('Exclusão verificada: '+results.at(-1));
+        }
+        encerrarOperacao();
+        modal(`<h3>Exclusões verificadas</h3><p>${results.length} planos foram removidos e conferidos na lista do SEGES.</p>
+          <div class="scroll">${results.map(x=>'<div style="padding:5px">'+html(x)+'</div>').join('')}</div>
+          <div class="actions"><button id="seges-v3-download">Baixar relatório TXT</button>
+          <button id="seges-v3-done">Fechar</button></div>`);
+        $('#seges-v3-download').onclick=()=>baixar('seges-exclusoes.txt',results.join('\n'));
+        $('#seges-v3-done').onclick=fecharModal;
+      }catch(error){
+        if(cancelado)return;
+        status('Exclusão interrompida: '+error.message);
+        encerrarOperacao();
+        modal(`<h3>Exclusão interrompida</h3><p style="color:#af3333">${html(error.message)}</p>
+          <p>Exclusões verificadas antes da interrupção: ${results.length}.
+          Não tente novamente sem conferir os registros no SEGES.</p>
+          <div class="actions"><button id="seges-v3-done">Fechar</button></div>`);
+        $('#seges-v3-done').onclick=fecharModal;
+      }
+    };
+  }catch(error){falhar(error);}
+  finally{if(ativo)encerrarOperacao();}
+}
   painel();
   if(location.pathname!==BASE)status('Abra a lista de turmas em Planos Semanais para iniciar.');
 }
