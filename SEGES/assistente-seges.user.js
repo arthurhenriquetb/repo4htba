@@ -2189,8 +2189,17 @@ function iniciarModuloPlanos() {
   }
   function arrayDados(value) {
     if(!value)return [];
-    try{const parsed=JSON.parse(value);return Array.isArray(parsed)?parsed.map(String):[];}
-    catch(_){return [];}
+    const source=String(value).trim();
+    const tryParse=(raw)=>{
+      try {const parsed=JSON.parse(raw);return Array.isArray(parsed)?parsed.map(String):null;}
+      catch(_) {return null;}
+    };
+    const direct=tryParse(source);
+    if(direct)return direct;
+    const decoder=document.createElement('textarea');
+    decoder.innerHTML=source;
+    const decoded=tryParse(decoder.value);
+    return decoded||[];
   }
   function opcoesDoBloco(root) {
     return $$('.structured-weekly-plan-id-select option',root)
@@ -2299,11 +2308,12 @@ function iniciarModuloPlanos() {
             if(found>=5||consulted>=12)break;
             verificarAtivo();
             const key=cls.id+':'+old.week;
-            if(!arquivos.has(key))progresso.total++;
+            const firstRead=!arquivos.has(key);
+            if(firstRead)progresso.total++;
             const form=await lerSemana(cls,old);
             consulted++;
             if(temPlano(form))found++;
-            progresso.atual=Math.min(progresso.total,progresso.atual+1);
+            if(firstRead)progresso.atual++;
             atualizarProgresso();
             status('Histórico de '+cls.name+': '+found+'/5 semanas com plano (antes da '+week.week+')');
           }
