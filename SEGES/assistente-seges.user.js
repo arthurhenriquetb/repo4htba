@@ -2059,7 +2059,7 @@ function iniciarModuloPlanos() {
       const missing=/\/weekly_plans\/new\/?$/.test(url.pathname);
       if(!existing&&!missing)return null;
       return {week,url:url.href,existing,period:String(cells[1].textContent||'').trim(),
-        status:String(cells[2].textContent||'').trim(),classId:turma.id};
+        status:String(cells[2].textContent||'').trim(),classId:turma.id,rowHtml:tr.outerHTML};
     }).filter(Boolean);
   }
   function etapaNome(nome) {
@@ -2086,7 +2086,10 @@ function iniciarModuloPlanos() {
   function sugerirSemanas(quantity=2) {
     for(const cls of catalogo){
       const weeks=semanasPorTurma.get(cls.id)||[];
-      const first=weeks.filter(w=>!w.existing).sort((a,b)=>a.week-b.week).slice(0,quantity);
+      const latestPlanned=Math.max(0,...weeks.filter(w=>w.existing).map(w=>w.week));
+      const after=weeks.filter(w=>!w.existing && w.week>latestPlanned).sort((a,b)=>a.week-b.week);
+      const pending=weeks.filter(w=>!w.existing).sort((a,b)=>a.week-b.week);
+      const first=(after.length?after:pending).slice(0,quantity);
       selecionadas.set(cls.id,new Set(first.map(w=>w.week)));
     }
   }
@@ -2131,10 +2134,10 @@ function iniciarModuloPlanos() {
     arquivos=new Map();substituicoes=new Map();ultimoRelatorio=null;
     quadroAtual={stages:new Map(),review:null};
     const root=modal(`<h3>Escolher turmas e semanas</h3>
-      <p class="hint">Uma tabela para todas as turmas. As duas primeiras semanas <strong>sem plano</strong> de cada turma já vêm marcadas; ajuste se a escola pediu outras semanas.</p>
+      <p class="hint">Uma tabela para todas as turmas. As próximas semanas sem plano, após a última já planejada, vêm marcadas (duas por turma). Você pode ajustar a quantidade e qualquer célula.</p>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
         <label>Semanas por turma <select id="seges-v3-quantity"><option>2</option><option>3</option><option>4</option><option>1</option></select></label>
-        <button id="seges-v3-reselect">Marcar primeiras pendentes</button>
+        <button id="seges-v3-reselect">Marcar próximas pendentes</button>
         <label><input id="seges-v3-existing" type="checkbox"> Mostrar semanas com plano</label>
         <strong id="seges-v3-count"></strong>
       </div>
@@ -2379,7 +2382,7 @@ function iniciarModuloPlanos() {
   function abrirTabelaSemRecarregar(){
     const root=modal(`<h3>Escolher turmas e semanas</h3><p class="hint">Ajuste as células e revise novamente.</p>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><label>Semanas por turma <select id="seges-v3-quantity"><option>2</option><option>3</option><option>4</option><option>1</option></select></label>
-      <button id="seges-v3-reselect">Marcar primeiras pendentes</button><label><input id="seges-v3-existing" type="checkbox"> Mostrar semanas com plano</label>
+      <button id="seges-v3-reselect">Marcar próximas pendentes</button><label><input id="seges-v3-existing" type="checkbox"> Mostrar semanas com plano</label>
       <strong id="seges-v3-count"></strong></div><div id="seges-v3-grid"></div><p id="seges-v3-message" class="hint"></p>
       <div class="actions"><button id="seges-v3-cancel" class="danger">Cancelar</button>
       <button id="seges-v3-preview" class="primary">Ver sugestões</button></div>`);
@@ -2584,7 +2587,10 @@ function iniciarModuloPlanos() {
   const before=action.row.existingSkill||'';
   let block=$('.structured-weekly-plan-id-select',tr)
     .map(el=>el.closest('.nested-fields')||el.parentElement)
-    .find(el=>String($('.structured-weekly-plan-id-select',el)?.value||'')===(before||action.value));
+    .find(el=>{
+      const value=String($('.structured-weekly-plan-id-select',el)?.value||'');
+      return value===action.value || (before&&value===before) || !value;
+    });
   if(!block && before)throw Error('A habilidade existente não foi localizada na aula '+(action.row.index+1));
   if(!block){
     const add=$('.add_fields',tr);
