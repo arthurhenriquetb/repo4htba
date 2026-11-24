@@ -2311,19 +2311,25 @@ function iniciarModuloPlanos() {
         let representative=proposal||'';
         for(const row of form.rows){
           if(row.kind==='other'||(row.kind==='manual'&&row.existingText))continue;
-          if(row.kind==='science' && row.existingSkill && !substituicoes.has(cls.id+':'+week.week+':'+row.index))continue;
+          // Aulas com registro existente também aparecem na revisão;
+          // a opção padrão é preservar ou complementar, nunca apagar.
           const key=cls.id+':'+week.week+':'+row.index;
           const override=quadroAtual.overrides.has(key)?quadroAtual.overrides.get(key):undefined;
           const valid=validasParaTurma(row.opts,cls.stage);
-          let value=override===undefined ? (row.kind==='science' ? proposal : 'TEXT') : override;
-          if(row.kind==='science'&&value&&!valid.some(opt=>opt.value===value))value='';
+          let value=override===undefined
+            ? (row.kind==='science' ? (row.existingSkill
+                ? (row.hasKnowledge && (row.hasMethod || row.evaluation==='true') ? '__keep' : row.existingSkill)
+                : proposal) : 'TEXT')
+            : override;
+          if(row.kind==='science'&&value!=='__keep'&&value&&!valid.some(opt=>opt.value===value))
+            value=row.existingSkill?'__keep':'';
           const candidate=row.kind==='science'?valid.find(opt=>opt.value===value):null;
           const line={key,cls,week,row,value,options:valid,
             history:recent.map(item=>item.skill||'sem habilidade'),
             label:candidate?.label||'',manual:row.kind==='manual'};
           suggested.push(line);
-          if(row.kind==='science'&&value&&representative==='')representative=value;
-          if(row.kind==='science'&&override!==undefined&&value)representative=value;
+          if(row.kind==='science'&&value&&value!=='__keep'&&representative==='')representative=value;
+          if(row.kind==='science'&&override!==undefined&&value&&value!=='__keep')representative=value;
         }
         if(week.existing)timeline.set(week.week,{week:week.week,skill:representative||realExisting||null,hasPlan:true});
         else if(representative)timeline.set(week.week,{week:week.week,skill:representative,hasPlan:true});
