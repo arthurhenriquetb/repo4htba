@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.2.5
+// @version      3.2.6
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -1968,7 +1968,7 @@ function iniciarModuloPlanos() {
     estilos();
     if($('#seges-v3-panel'))return;
     const el=document.createElement('div');el.id='seges-v3-panel';
-    el.innerHTML=`<div class="head">SEGES • Assistente v3.2.5 — Planos</div><div class="body">
+    el.innerHTML=`<div class="head">SEGES • Assistente v3.2.6 — Planos</div><div class="body">
       <div id="seges-v3-status" style="margin-bottom:8px">Pronto. Nada será retomado depois que a guia for fechada.</div>
       <div style="height:9px;background:#e1eaf2;border-radius:8px;overflow:hidden"><div id="seges-v3-progress" style="height:100%;width:0;background:#1578b3"></div></div>
       <div id="seges-v3-percentage" style="font-size:11px;text-align:right">0%</div>
@@ -2025,7 +2025,7 @@ function iniciarModuloPlanos() {
       .map(line=>line.replace(/(https?:\/\/[^\s?#)]+)\?[^\s)]+/g,'$1?[parâmetros ocultos]'))
       .join('\n');
     return [
-      'SEGES • Assistente 3.2.5',
+      'SEGES • Assistente 3.2.6',
       'Etapa: '+String(etapa||'Não identificada'),
       'Plano: '+String(contexto||'Não identificado'),
       'Erro: '+message,
@@ -2338,7 +2338,9 @@ function iniciarModuloPlanos() {
       const hasKnowledge=selections('.structured-weekly-plan-knowledges-select').length>0;
       const hasMethod=selections('.structured-weekly-plan-methodologies-select').length>0;
       const evaluation=$('.structured-weekly-plan-evaluation-select',tr)?.value||'';
-      const availableMethods=$('.structured-weekly-plan-methodologies-select option',tr)
+      // $$ retorna sempre uma lista, mesmo quando a aula não possui
+      // opções de metodologia. $ retornava null e causava erro em .filter().
+      const availableMethods=$$('.structured-weekly-plan-methodologies-select option',tr)
         .filter(option=>String(option.value||'').trim())
         .map(option=>String(option.textContent||option.value).trim());
       return {index,discipline,date,kind,existingText,existingSkill,existingSkillLabel,hasKnowledge,hasMethod,evaluation,availableMethods,
