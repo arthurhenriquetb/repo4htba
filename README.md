@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.7**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.9**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -49,6 +49,14 @@ A automação não escolhe mais a primeira metodologia do dropdown, o que anteri
 Na **tabela de revisão**, cada aula estruturada dispõe de **dois seletores de metodologia**. Você pode mudar qualquer um. Após uma alteração, o programa pergunta se deseja aplicar a mesma combinação às aulas equivalentes das **outras turmas do mesmo ano, na mesma semana, disciplina e posição da aula**. A aplicação só ocorre quando o SEGES disponibiliza essas opções na turma de destino; as aulas já preenchidas são preservadas por padrão.
 
 Se o SEGES não oferecer as duas metodologias desejadas, o programa mostra o problema na revisão e **não permite autorizar aquela aula com menos de duas metodologias diferentes**. Você poderá escolher alternativas disponíveis ou marcar **Não preencher**. O script não cria metodologias artificiais nem as substitui automaticamente por jogos.
+
+### Visibilidade e desempenho da revisão (v3.2.9)
+
+A janela principal de **Preencher planos → Ver sugestões e revisar** passou a ser exibida acima das camadas do SEGES, com estilos próprios e prioridade máxima. O painel pequeno de progresso é ocultado enquanto essa janela estiver aberta, e o **andamento da leitura aparece na própria janela principal**. Ao fechar ou cancelar, o painel pequeno reaparece.
+
+A tabela de revisão agora apresenta **40 aulas por página** com botões **Anterior/Próxima**, sem perder a revisão ou consultar novamente o SEGES ao navegar. Isto evita renderizar milhares de opções de habilidades simultaneamente em lotes grandes. Se não houver aulas elegíveis, a tela mostra um aviso e desativa a aprovação. A operação continua **sem salvar planos até o usuário aprovar explicitamente**.
+
+Foram realizados testes simulados de exibição da janela, ocultação/retorno do painel e paginação com 125 aulas e 160 opções de habilidade por aula. Não houve teste na sessão autenticada.
 
 ### Leitura eficiente da prévia (v3.2.7)
 
