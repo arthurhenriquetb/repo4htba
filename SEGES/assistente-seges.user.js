@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.2.4
+// @version      3.2.5
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -2017,12 +2017,44 @@ function iniciarModuloPlanos() {
     a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
+  function diagnosticoErro(error,etapa,contexto) {
+    const message=String(error?.message||error||'Erro sem descrição');
+    // Evita copiar parâmetros de URL, que podem conter tokens de sessão.
+    const trace=String(error?.stack||'')
+      .split('\n').slice(0,9)
+      .map(line=>line.replace(/(https?:\/\/[^\s?#)]+)\?[^\s)]+/g,'$1?[parâmetros ocultos]'))
+      .join('\n');
+    return [
+      'SEGES • Assistente 3.2.5',
+      'Etapa: '+String(etapa||'Não identificada'),
+      'Plano: '+String(contexto||'Não identificado'),
+      'Erro: '+message,
+      'Rastreamento técnico (sem parâmetros de URL):',
+      trace||'Não disponível'
+    ].join('\n');
+  }
   function falhar(error) {
     if(cancelado)return;
+    const detail=diagnosticoErro(error,'Abertura ou leitura da tabela','Nenhuma exclusão enviada por esta tentativa');
     status('Interrompido: '+String(error?.message||error));
     encerrarOperacao();
     iframe?.remove();iframe=null;
-    const msg=$('#seges-v3-message');if(msg)msg.textContent=String(error?.message||error);
+    const root=modal(`<h3>Operação interrompida</h3>
+      <p style="color:#a52b32">${html(String(error?.message||error))}</p>
+      <p class="hint">A mensagem acima não permite identificar a causa sozinha.
+      Copie o diagnóstico, que agora inclui a localização técnica do erro.
+      Nenhum novo envio será tentado automaticamente.</p>
+      <div class="actions">
+        <button type="button" id="seges-v3-copy-general">Copiar diagnóstico</button>
+        <button type="button" id="seges-v3-download-general">Baixar TXT</button>
+        <button type="button" id="seges-v3-close-general">Fechar</button>
+      </div>`);
+    $('#seges-v3-copy-general',root).onclick=async()=>{
+      try{await navigator.clipboard.writeText(detail);alert('Diagnóstico copiado.');}
+      catch(_){baixar('seges-diagnostico.txt',detail);}
+    };
+    $('#seges-v3-download-general',root).onclick=()=>baixar('seges-diagnostico.txt',detail);
+    $('#seges-v3-close-general',root).onclick=fecharModal;
   }
   async function buscarPagina(href) {
     verificarAtivo();
@@ -3351,11 +3383,8 @@ function iniciarModuloPlanos() {
         if(cancelado)return;
         const reason=String(error?.message||error);
         const report=[
-          'SEGES • Assistente '+ '3.2.3',
-          'Etapa: '+etapa,
-          'Último plano examinado: '+contexto,
+          diagnosticoErro(error,etapa,contexto),
           'Último método enviado: '+ultimoMetodo,
-          'Erro: '+reason,
           'Exclusões verificadas: '+results.length,
           ...results.map(value=>'CONFIRMADO: '+value)
         ].join('\n');
