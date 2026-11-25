@@ -2514,7 +2514,9 @@ function iniciarModuloPlanos() {
         stageLines.push(line);
         if(row.kind==='science'&&!row.existingSkill&&!options.length)
           warnings.push(cls.name+' · semana '+week.week+' · '+row.discipline+
-            ' · aula '+(ordinal+1)+': o SEGES não apresentou habilidades no dropdown.');
+            ' · aula '+(ordinal+1)+': '+(row.opts.length
+              ? 'nenhuma habilidade compatível com a etapa selecionada; confira o ano/série.'
+              : 'o SEGES não apresentou opções de habilidades no dropdown.'));
       }
       processed.push({context,form,week,lines});
     }
