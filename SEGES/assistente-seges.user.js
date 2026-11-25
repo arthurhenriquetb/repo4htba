@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.2.2
+// @version      3.2.3
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -3149,10 +3149,11 @@ function iniciarModuloPlanos() {
     const detail=await buscarPagina(week.url);
     control=identificarExcluir(detail);
   }
-  if(!control)throw Error('O SEGES não apresentou um botão oficial para excluir a semana '+week.week+'.');
+  if(!control)throw Error('Não encontrei um comando de exclusão no SEGES para a semana '+week.week+
+    '. O programa não apagou este plano. Verifique se o SEGES permite excluí-lo manualmente.');
   const actual=urlSeges(control.url)?.pathname.match(/^\/weekly_plans\/(\d+)\/?$/)?.[1];
   const listed=urlSeges(week.url)?.pathname.match(/^\/weekly_plans\/(\d+)(?:\/edit)?\/?$/)?.[1];
-  if(!actual||actual!==listed)throw Error('O comando de exclusão não corresponde ao plano escolhido.');
+  if(!actual||actual!==listed)throw Error('O comando de exclusão encontrado não corresponde ao ID do plano escolhido. Por segurança, nenhum comando foi enviado.');
   return control;
 }
 
@@ -3172,7 +3173,17 @@ function iniciarModuloPlanos() {
   const response=await fetch(control.url,options);
   verificarAtivo();
   const returned=urlSeges(response.url);
-  if(!response.ok||!returned)throw Error('Falha ou redirecionamento inesperado ao excluir (HTTP '+response.status+').');
+  if(!response.ok||!returned){
+    let note='';
+    try{
+      const body=await response.text();
+      const page=new DOMParser().parseFromString(body,'text/html');
+      const message=$('.alert-danger,.alert-error,#error_explanation',page);
+      note=String(message?.textContent||'').replace(/\s+/g,' ').trim().slice(0,240);
+    }catch(_){}
+    throw Error('O SEGES recusou a requisição de exclusão (HTTP '+response.status+
+      (note?', mensagem: '+note:'')+'). Confirme suas permissões e o registro antes de tentar novamente.');
+  }
 }
 
   async function verificarExclusao(week,cls){
@@ -3274,6 +3285,10 @@ function iniciarModuloPlanos() {
         const w=c?.weeks.find(x=>x.week===Number(el.dataset.excluirWeek));
         return w?{cls:c.cls,week:w}:null;
       }).filter(Boolean);
+      if(selected.length!==checked.length || !selected.length){
+        alert('A seleção ficou inconsistente. Nenhum plano será excluído; reabra a tabela.');
+        return;
+      }
       const phrase='EXCLUIR '+selected.length;
       const answer=prompt('Você selecionou '+selected.length+' planos de '+new Set(selected.map(x=>x.cls.id)).size+
         ' turma(s).\n\nA exclusão é permanente. Digite exatamente '+phrase+' para confirmar:');
@@ -3282,17 +3297,35 @@ function iniciarModuloPlanos() {
       progresso={atual:0,total:selected.length};atualizarProgresso();
       btn.disabled=true;
       const results=[];
+      let etapa='Conferência dos comandos de exclusão';
+      let contexto='Nenhum plano foi enviado para exclusão';
       try{
-        for(const {cls,week} of selected){
+        // Verificar TODOS os comandos antes da primeira modificação.
+        // Se qualquer plano não oferecer exclusão oficial, parar sem deletar nenhum.
+        const prepared=[];
+        progresso={atual:0,total:selected.length*2};atualizarProgresso();
+        for(const entry of selected){
           verificarAtivo();
-          status('Excluindo '+cls.name+' · semana '+week.week);
-          const command=await comandoExcluir(week);
-          await executarExclusaoOficial(command);
-          if(!await verificarExclusao(week,cls))
-            throw Error('O SEGES respondeu, mas não foi possível confirmar a exclusão desta semana. Confira manualmente.');
-          results.push(cls.name+' · semana '+week.week);
+          contexto=entry.cls.name+' · semana '+entry.week.week;
+          status('Verificando se o SEGES permite excluir: '+contexto);
+          const command=await comandoExcluir(entry.week);
+          prepared.push({...entry,command});
           progresso.atual++;atualizarProgresso();
-          log('Exclusão verificada: '+results.at(-1));
+        }
+        etapa='Exclusão';
+        log('Todos os '+prepared.length+' comandos oficiais foram localizados. Iniciando exclusões autorizadas.');
+        for(const {cls,week,command} of prepared){
+          verificarAtivo();
+          contexto=cls.name+' · semana '+week.week;
+          status('Excluindo '+contexto);
+          await executarExclusaoOficial(command);
+          etapa='Confirmação do resultado';
+          if(!await verificarExclusao(week,cls))
+            throw Error('O SEGES respondeu, mas a lista não confirmou a remoção. Não repita sem conferir manualmente.');
+          results.push(contexto);
+          progresso.atual++;atualizarProgresso();
+          log('Exclusão verificada: '+contexto);
+          etapa='Exclusão';
         }
         encerrarOperacao();
         modal(`<h3>Exclusões verificadas</h3><p>${results.length} planos foram removidos e conferidos na lista do SEGES.</p>
@@ -3303,12 +3336,35 @@ function iniciarModuloPlanos() {
         $('#seges-v3-done').onclick=fecharModal;
       }catch(error){
         if(cancelado)return;
-        status('Exclusão interrompida: '+error.message);
+        const reason=String(error?.message||error);
+        const report=[
+          'SEGES • Assistente '+ '3.2.3',
+          'Etapa: '+etapa,
+          'Último plano examinado: '+contexto,
+          'Erro: '+reason,
+          'Exclusões verificadas: '+results.length,
+          ...results.map(value=>'CONFIRMADO: '+value)
+        ].join('\n');
+        status('Exclusão interrompida em '+etapa+': '+reason);
+        log('Falha no plano: '+contexto);
         encerrarOperacao();
-        modal(`<h3>Exclusão interrompida</h3><p style="color:#af3333">${html(error.message)}</p>
-          <p>Exclusões verificadas antes da interrupção: ${results.length}.
-          Não tente novamente sem conferir os registros no SEGES.</p>
-          <div class="actions"><button id="seges-v3-done">Fechar</button></div>`);
+        modal(`<h3>Exclusão interrompida — ${html(etapa)}</h3>
+          <p style="color:#a52b32;font-weight:bold">${html(reason)}</p>
+          <p><b>Plano:</b> ${html(contexto)}.</p>
+          <p><b>Exclusões confirmadas:</b> ${results.length}.
+          ${etapa==='Conferência dos comandos de exclusão'?'Nenhum comando de exclusão foi enviado nesta tentativa.':
+            'Algumas exclusões podem já ter ocorrido. Confira o SEGES antes de tentar novamente.'}</p>
+          <p class="hint">Use "Copiar diagnóstico" para compartilhar a causa do erro sem precisar procurar no console. Não compartilhe tokens nem informações pessoais da página.</p>
+          <div class="actions">
+            <button type="button" id="seges-v3-copy-error">Copiar diagnóstico</button>
+            <button type="button" id="seges-v3-save-error">Baixar diagnóstico TXT</button>
+            <button type="button" id="seges-v3-done">Fechar</button>
+          </div>`);
+        $('#seges-v3-copy-error').onclick=async()=>{
+          try{await navigator.clipboard.writeText(report);alert('Diagnóstico copiado.');}
+          catch(_){baixar('seges-erro-exclusao.txt',report);alert('Seu navegador bloqueou a cópia; o diagnóstico foi baixado em TXT.');}
+        };
+        $('#seges-v3-save-error').onclick=()=>baixar('seges-erro-exclusao.txt',report);
         $('#seges-v3-done').onclick=fecharModal;
       }
     };
