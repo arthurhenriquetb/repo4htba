@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.5**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.6**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -65,6 +65,8 @@ A sequência funciona assim:
 O filtro curricular usa os códigos EF/EM das habilidades quando estão disponíveis. Se a etapa não puder ser determinada, a seleção é manual. O script não insere opções inventadas para forçar o formulário.
 
 ### Semanas sem aulas
+
+**Correção v3.2.6 — prévia de planejamentos:** o erro `Cannot read properties of null (reading 'filter')` foi rastreado especificamente até a função `lerAulas`. A leitura das opções de metodologias consultava um único elemento (ou `null`) e chamava `.filter()`. A função agora busca sempre uma lista, incluindo a lista vazia quando o SEGES não disponibiliza metodologias para determinada aula. Foram simulados: aula sem opções, aula com duas metodologias, semana sem aulas e formulário inválido; os quatro testes passaram. **Essa falha ocorria na leitura para planejamento, não durante a exclusão.** O módulo de exclusão não foi alterado nesta correção.
 
 Feriados, conselhos de classe, encerramentos de período e outras semanas em que não há aulas são **ignorados automaticamente**, sem preenchimento nem salvamento. O painel registra a semana ignorada e a revisão mostra um aviso, mas o programa segue com as demais semanas selecionadas.
 
