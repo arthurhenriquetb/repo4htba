@@ -2557,9 +2557,6 @@ function iniciarModuloPlanos() {
         };
         lines.push(line);
         stageLines.push(line);
-        if(row.kind==='science'&&value&&value!=='__keep'&&methodologies.length<2)
-          warnings.push(cls.name+' · semana '+week.week+' · '+row.discipline+' · aula '+(ordinal+1)+
-            ': não foi possível sugerir as duas metodologias padrão. Escolha duas na revisão; nunca será escolhida Aprendizagem Baseada em Jogos como substituta.');
         if(row.kind==='science'&&!row.existingSkill&&!options.length)
           warnings.push(cls.name+' · semana '+week.week+' · '+row.discipline+
             ' · aula '+(ordinal+1)+': '+(row.opts.length
@@ -2608,6 +2605,20 @@ function iniciarModuloPlanos() {
             ': não há opção equivalente à habilidade das outras turmas. Manteve a sugestão própria.');
         }
       }
+    }
+    // Depois de alinhar as habilidades, recalcular as metodologias daquele currículo.
+    for(const line of stageLines){
+      if(line.manual)continue;
+      const ability=line.options.find(opt=>String(opt.value)===String(line.value));
+      line.methodOptions=(line.value&&line.value!=='__keep')
+        ? opcoesMetodologia(line.row,ability):[];
+      const override=quadroAtual.methodOverrides?.get(line.key);
+      line.methodologies=override!==undefined
+        ? mapearMetodologias(override,line.methodOptions)
+        : sugerirMetodologias(line.methodOptions);
+      if(line.value&&line.value!=='__keep'&&line.methodologies.length<2)
+        warnings.push(line.cls.name+' · semana '+line.week.week+' · '+line.row.discipline+
+          ' · aula '+(line.ordinal+1)+': escolha duas metodologias disponíveis antes de aprovar.');
     }
     for(const item of processed){
       const {context,form,week,lines}=item;
