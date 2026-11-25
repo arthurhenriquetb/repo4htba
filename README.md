@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.3**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.4**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -81,6 +81,8 @@ O botão **Parar** cancela as operações pendentes. Depois de uma interrupção
 **Importante:** registros que o SEGES já recebeu podem permanecer salvos mesmo após fechar a guia ou interromper uma operação. Confira-os diretamente no SEGES antes de executar novamente.
 
 ### Excluir planos de várias turmas
+
+**Correção v3.2.4 (HTTP 404 na exclusão):** a aplicação de alguns comandos com `data-method="delete"` estava enviando um `DELETE` HTTP direto. Em Rails UJS, esse link é acionado como formulário `POST` com `_method=delete`. O assistente agora respeita essa distinção, mantém comandos `data-turbo-method="delete"` com `DELETE`, e não força o cabeçalho de XMLHttpRequest em formulários HTML. O diagnóstico também registra o método usado, sem divulgar tokens. **Não há tentativa automática com métodos alternativos** após um erro. A alteração passou em testes simulados, mas ainda precisa de validação na sessão autenticada do SEGES. Teste primeiro apenas um plano.
 
 **Diagnóstico de exclusão — v3.2.3:** antes de excluir o primeiro plano do lote, o programa verifica se consegue localizar os comandos oficiais de exclusão de **todos** os registros selecionados. Se algum não tiver comando reconhecido, interrompe o lote **sem executar nenhuma exclusão**. Se uma requisição falhar ou a confirmação não funcionar, a mensagem mostrará a etapa, turma, semana, motivo e a quantidade de exclusões verificadas. O botão **Copiar diagnóstico** permite compartilhar o problema. Não repita uma operação que tenha enviado exclusões sem antes conferir no SEGES quais registros continuam presentes.
 
