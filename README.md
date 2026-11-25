@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.9**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.3.0**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -49,6 +49,12 @@ A automação não escolhe mais a primeira metodologia do dropdown, o que anteri
 Na **tabela de revisão**, cada aula estruturada dispõe de **dois seletores de metodologia**. Você pode mudar qualquer um. Após uma alteração, o programa pergunta se deseja aplicar a mesma combinação às aulas equivalentes das **outras turmas do mesmo ano, na mesma semana, disciplina e posição da aula**. A aplicação só ocorre quando o SEGES disponibiliza essas opções na turma de destino; as aulas já preenchidas são preservadas por padrão.
 
 Se o SEGES não oferecer as duas metodologias desejadas, o programa mostra o problema na revisão e **não permite autorizar aquela aula com menos de duas metodologias diferentes**. Você poderá escolher alternativas disponíveis ou marcar **Não preencher**. O script não cria metodologias artificiais nem as substitui automaticamente por jogos.
+
+### Interface de janela única (v3.3.0)
+
+**O painel pequeno não é mais escondido atrás de uma segunda janela.** Ao clicar em **Preencher planos** ou **Excluir planos**, o próprio painel muda para um espaço de trabalho que ocupa toda a janela do navegador, com o progresso e a tabela na mesma área visível. Ao fechar, volta ao formato de painel pequeno. Isso evita conflito de camadas escuras, diálogos do SEGES e janelas flutuantes ocultas.
+
+A versão 3.3.0 substitui lançadores antigos do mesmo assistente encontrados na página e reinjeta seus estilos, mas ainda é importante manter apenas uma versão do userscript ativa no Violentmonkey. O conteúdo da prévia continua paginado em até 40 aulas e não salva registros antes da aprovação. Foram feitos testes simulados da abertura, substituição da tela, encerramento e sintaxe. **Não houve teste com a sessão autenticada do SEGES.**
 
 ### Visibilidade e desempenho da revisão (v3.2.9)
 
