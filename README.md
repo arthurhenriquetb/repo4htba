@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.6**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.7**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -49,6 +49,10 @@ A automação não escolhe mais a primeira metodologia do dropdown, o que anteri
 Na **tabela de revisão**, cada aula estruturada dispõe de **dois seletores de metodologia**. Você pode mudar qualquer um. Após uma alteração, o programa pergunta se deseja aplicar a mesma combinação às aulas equivalentes das **outras turmas do mesmo ano, na mesma semana, disciplina e posição da aula**. A aplicação só ocorre quando o SEGES disponibiliza essas opções na turma de destino; as aulas já preenchidas são preservadas por padrão.
 
 Se o SEGES não oferecer as duas metodologias desejadas, o programa mostra o problema na revisão e **não permite autorizar aquela aula com menos de duas metodologias diferentes**. Você poderá escolher alternativas disponíveis ou marcar **Não preencher**. O script não cria metodologias artificiais nem as substitui automaticamente por jogos.
+
+### Leitura eficiente da prévia (v3.2.7)
+
+A preparação de **Preencher planos** lê somente as semanas selecionadas e os históricos necessários para sugerir habilidades. Quando várias semanas da mesma turma compartilham o mesmo histórico, esse grupo é processado uma única vez, e formulários já lidos são reutilizados **somente na memória da guia**. Semanas selecionadas sem aulas são ignoradas e não geram leitura de histórico. O log agora mostra uma linha de resumo por turma no lugar de repetidas mensagens `1/5...`, `2/5...`. Não houve mudanças no módulo **Excluir planos**. Testes simulados confirmaram agrupamento, ausência de consultas duplicadas, semanas vazias ignoradas e prévia preparada sem gravação. O preenchimento efetivo continua dependendo de teste autenticado no SEGES.
 
 ### Como o planejador escolhe habilidades
 
