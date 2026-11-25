@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.2.8
+// @version      3.2.9
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -1972,7 +1972,7 @@ function iniciarModuloPlanos() {
     estilos();
     if($('#seges-v3-panel'))return;
     const el=document.createElement('div');el.id='seges-v3-panel';
-    el.innerHTML=`<div class="head">SEGES • Assistente v3.2.8 — Planos</div><div class="body">
+    el.innerHTML=`<div class="head">SEGES • Assistente v3.2.9 — Planos</div><div class="body">
       <div id="seges-v3-status" style="margin-bottom:8px">Pronto. Nada será retomado depois que a guia for fechada.</div>
       <div style="height:9px;background:#e1eaf2;border-radius:8px;overflow:hidden"><div id="seges-v3-progress" style="height:100%;width:0;background:#1578b3"></div></div>
       <div id="seges-v3-percentage" style="font-size:11px;text-align:right">0%</div>
@@ -2074,7 +2074,7 @@ function iniciarModuloPlanos() {
       .map(line=>line.replace(/(https?:\/\/[^\s?#)]+)\?[^\s)]+/g,'$1?[parâmetros ocultos]'))
       .join('\n');
     return [
-      'SEGES • Assistente 3.2.8',
+      'SEGES • Assistente 3.2.9',
       'Etapa: '+String(etapa||'Não identificada'),
       'Plano: '+String(contexto||'Não identificado'),
       'Erro: '+message,
@@ -2492,6 +2492,7 @@ function iniciarModuloPlanos() {
       quadroAtual.historyWarnings=warnings;
       quadroAtual.overrides=new Map();
       quadroAtual.methodOverrides=new Map();
+      quadroAtual.previewPage=0;
       status('Montando a tabela de sugestões para revisão...');
       mostrarPrevia();
       if(!$('#seges-v3-overlay #seges-v3-approve'))
@@ -2754,7 +2755,15 @@ function iniciarModuloPlanos() {
   function mostrarPrevia() {
   const result=gerarPropostas();
   quadroAtual.review=result;
-  const rows=result.suggested.map(line=>{
+  // Até 40 aulas por página: evita criar milhares de opções de select
+  // de uma só vez (comum ao marcar 30+ semanas em muitas turmas).
+  const pageSize=40;
+  const pages=Math.max(1,Math.ceil(result.suggested.length/pageSize));
+  const currentPage=Math.max(0,Math.min(pages-1,Number(quadroAtual.previewPage)||0));
+  quadroAtual.previewPage=currentPage;
+  const start=currentPage*pageSize;
+  const visible=result.suggested.slice(start,start+pageSize);
+  const rows=visible.map(line=>{
     const {cls,week,row,value,options,history}=line;
     const skillSelector=line.manual?
       `<label><input type="checkbox" data-proposal-key="${html(line.key)}" ${value==='TEXT'?'checked':''}> Escrever texto padrão</label>`:
@@ -2785,6 +2794,12 @@ function iniciarModuloPlanos() {
   const root=modal(`<h3>Conferir habilidades e metodologias</h3>
     <p class="hint">Nenhum plano foi gravado. As duas metodologias sugeridas são <b>Aula expositiva dialogada</b> e <b>Resolução de exercícios</b>. É possível trocar cada uma. Se você alterar uma metodologia, será perguntado se deseja replicá-la nas aulas equivalentes das outras turmas do mesmo ano.</p>
     <p class="hint"><strong>${result.suggested.length} aula(s) para conferir.</strong> ${result.suggested.length ? 'A tabela abaixo é editável.' : 'Nenhuma aula elegível encontrada. Volte à tabela e escolha outras semanas.'}</p>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:7px 0 10px">
+      <button id="seges-v3-page-prev" type="button" ${currentPage===0?'disabled':''}>Anterior</button>
+      <strong id="seges-v3-page-info">Aulas ${result.suggested.length?start+1:0}–${Math.min(start+pageSize,result.suggested.length)} de ${result.suggested.length}</strong>
+      <button id="seges-v3-page-next" type="button" ${currentPage>=pages-1?'disabled':''}>Próxima</button>
+      <span class="hint">Página ${currentPage+1} de ${pages}. As alterações nas outras páginas também são mantidas.</span>
+    </div>
     <div class="scroll"><table><thead><tr>
       <th>Turma</th><th>Semana</th><th>Aula</th><th>Disciplina</th><th>Habilidade</th>
       <th>Metodologias (duas)</th><th>Últimos planos</th></tr></thead>
@@ -2796,6 +2811,12 @@ function iniciarModuloPlanos() {
       <button id="seges-v3-cancel" class="danger">Cancelar</button>
       <button id="seges-v3-approve" class="primary">Aprovar e preencher</button>
     </div>`);
+  $('#seges-v3-page-prev',root).onclick=()=>{
+    if(currentPage>0){quadroAtual.previewPage=currentPage-1;mostrarPrevia();}
+  };
+  $('#seges-v3-page-next',root).onclick=()=>{
+    if(currentPage<pages-1){quadroAtual.previewPage=currentPage+1;mostrarPrevia();}
+  };
   $('#seges-v3-back',root).onclick=()=>{quadroAtual.review=null;abrirTabelaSemRecarregar();};
   $('#seges-v3-cancel',root).onclick=cancelar;
   $('#seges-v3-approve',root).disabled=result.suggested.length===0;
