@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.1.0**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.0**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -37,6 +37,19 @@ Na lista de Planos Semanais (`/weekly_plans`), clique em **Preencher planos**. O
 - Quando você alterar uma habilidade na revisão, o programa replica a escolha para aulas equivalentes **ainda não preenchidas**, se elas oferecerem a mesma habilidade. Registros preexistentes são preservados por padrão.
 - Se o SEGES não disponibilizar a habilidade equivalente em uma turma, o programa mantém uma sugestão própria e apresenta o aviso na revisão, em vez de forçar outro valor.
 
+### Metodologias por aula (v3.2)
+
+O preenchimento de **Ciências/Biologia** agora propõe **duas metodologias por aula**, nesta ordem:
+
+1. **Aula expositiva dialogada** (incluindo variações como *Aula expositiva/dialogada*).
+2. **Resolução de exercícios**.
+
+A automação não escolhe mais a primeira metodologia do dropdown, o que anteriormente podia resultar em **Aprendizagem Baseada em Jogos**.
+
+Na **tabela de revisão**, cada aula estruturada dispõe de **dois seletores de metodologia**. Você pode mudar qualquer um. Após uma alteração, o programa pergunta se deseja aplicar a mesma combinação às aulas equivalentes das **outras turmas do mesmo ano, na mesma semana, disciplina e posição da aula**. A aplicação só ocorre quando o SEGES disponibiliza essas opções na turma de destino; as aulas já preenchidas são preservadas por padrão.
+
+Se o SEGES não oferecer as duas metodologias desejadas, o programa mostra o problema na revisão e **não permite autorizar aquela aula com menos de duas metodologias diferentes**. Você poderá escolher alternativas disponíveis ou marcar **Não preencher**. O script não cria metodologias artificiais nem as substitui automaticamente por jogos.
+
 ### Como o planejador escolhe habilidades
 
 Para cada semana selecionada, o algoritmo consulta **somente até cinco semanas anteriores que realmente tenham conteúdo ou habilidades preenchidos**. Procura essas semanas de trás para frente, consultando **no máximo 12 candidatas anteriores** por semana; não percorre o ano inteiro. Se o histórico estiver incompleto, avisa na revisão.
@@ -69,7 +82,15 @@ O botão **Parar** cancela as operações pendentes. Depois de uma interrupção
 
 ### Excluir planos de várias turmas
 
-Clique em **Excluir planos**. Uma tabela de turmas por semana mostra somente registros existentes. Marque os planos que deseja excluir, clique em **Excluir planos marcados** e digite a expressão exata exigida na confirmação.
+A tabela de exclusão permite **seleção individual e em lote**:
+
+- Clique na **caixa do cabeçalho de uma coluna** para marcar todos os planos daquela semana, em todas as turmas disponíveis.
+- Clique na **caixa ao lado do nome de uma turma** para marcar todos os planos dessa turma.
+- Use **Selecionar tudo** ou **Desmarcar tudo** para todas as células disponíveis.
+- A seleção exibe um **contador** de planos marcados antes de confirmar a operação.
+
+
+Clique em **Excluir planos**. A tabela de turmas por semana mostra somente registros existentes. Marque os planos que deseja excluir, clique em **Excluir planos marcados** e digite a expressão exata exigida na confirmação.
 
 O programa procura um controle oficial de exclusão no HTML do SEGES, verifica a identidade do registro e tenta confirmar cada exclusão na listagem. Se não encontrar comando compatível ou não conseguir verificar o resultado, interrompe sem adivinhar URLs de exclusão.
 
@@ -98,6 +119,7 @@ As versões independentes e anteriores estão guardadas em [SEGES/arquivo](SEGES
 ## Testes e limitações
 
 - A **sintaxe JavaScript** foi verificada.
+- A escolha das duas metodologias, as variações de nomes, o impedimento de substituição por jogos e a correspondência entre turmas foram conferidas com dados simulados.
 - Foram testados cenários simulados de semana sem aulas, aviso explícito de ausência de aulas e páginas inválidas; os dois primeiros são ignorados e as páginas inválidas provocam erro seguro.
 - Foram corrigidas as consultas de múltiplas aulas e campos do formulário, para evitar que o script interpretasse uma aula isolada como a lista inteira.
 - A seleção automática de **2 ou 4 semanas após a última planejada**, a filtragem de habilidades por ano escolar, a progressão curricular e a simetria entre turmas com IDs internos diferentes foram testadas com **dados simulados**.
