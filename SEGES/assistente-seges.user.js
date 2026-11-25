@@ -2646,60 +2646,109 @@ function iniciarModuloPlanos() {
   return {suggested,warnings};
 }
   function mostrarPrevia() {
-    const result=gerarPropostas();
-    quadroAtual.review=result;
-    const rows=result.suggested.map(line=>{
-      const {cls,week,row,value,options,history}=line;
-      const select=line.manual?`<label><input type="checkbox" data-proposal-key="${html(line.key)}" ${value==='TEXT'?'checked':''}> Escrever texto padrão</label>`:
-        `<select data-proposal-key="${html(line.key)}" style="min-width:260px;max-width:370px">
-          <option value="" ${!value?'selected':''}>Não preencher</option>
-          ${row.existingSkill?`<option value="__keep" ${value==='__keep'?'selected':''}>Manter habilidade existente</option>`:''}
-          ${options.map((opt,i)=>`<option value="${html(opt.value)}" ${opt.value===value?'selected':''}>
-            ${opt.manualOnly?'⚠ ':''}${html(textoHabilidade(opt)==='Habilidade disponível no SEGES'
-              ? 'Opção '+(i+1)+' do currículo (descrição não exibida pelo SEGES)' : textoHabilidade(opt))}</option>`).join('')}
-        </select>`;
-      return `<tr><td>${html(cls.name)}</td><td>${week.week}</td><td>${row.index+1}</td>
-        <td style="text-align:left">${html(row.discipline)}${row.existingSkill?' · já preenchida':''}</td>
-        <td style="text-align:left">${select}</td>
-        <td title="${html(history.join(' → '))}" style="font-size:11px;color:#63768a">${html(history.filter(Boolean).slice(0,5).join(', ')||'Sem histórico curricular')}</td></tr>`;
-    }).join('');
-    const existing=$('#seges-v3-overlay');
-    const root=modal(`<h3>Conferir antes de preencher</h3>
-      <p class="hint">Nenhuma gravação foi feita. As habilidades são sugeridas com base nas <strong>cinco semanas anteriores com plano</strong>. Turmas da mesma etapa recebem sugestões iguais para a mesma disciplina, semana e posição da aula. Alterar uma sugestão também atualiza as aulas equivalentes ainda não preenchidas.</p>
-      <div class="scroll"><table><thead><tr><th>Turma</th><th>Semana</th><th>Aula</th><th>Disciplina</th><th>Habilidade / ação</th><th>Últimos planos</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="hint" id="seges-v3-warning">${result.warnings.length?html(result.warnings.join(' | ')):''}</p>
-      <p id="seges-v3-message" class="hint">${result.suggested.length} aula(s) encontradas. Semanas sem aulas são ignoradas automaticamente e não recebem salvamento. As opções com ⚠ não têm código de etapa reconhecido.</p>
-      <div class="actions">
-        <button id="seges-v3-back">Voltar à tabela</button>
-        <button id="seges-v3-cancel" class="danger">Cancelar</button>
-        <button id="seges-v3-approve" class="primary">Aprovar e preencher</button>
-      </div>`);
-    if(existing&&existing!==root)existing.remove();
-    $('#seges-v3-back').onclick=()=>{quadroAtual.review=null;abrirTabelaSemRecarregar();};
-    $('#seges-v3-cancel').onclick=cancelar;
-    $('#seges-v3-approve').onclick=()=>aprovarEExecutar().catch(falhar);
-    root.onchange=e=>{
-      const control=e.target.closest('[data-proposal-key]');if(!control)return;
-      const scroller=$('.scroll',root);
-      const previousTop=scroller?.scrollTop||0,previousLeft=scroller?.scrollLeft||0;
-      const key=control.dataset.proposalKey;
-      quadroAtual.overrides.set(key,control.type==='checkbox'?(control.checked?'TEXT':''):control.value);
+  const result=gerarPropostas();
+  quadroAtual.review=result;
+  const rows=result.suggested.map(line=>{
+    const {cls,week,row,value,options,history}=line;
+    const skillSelector=line.manual?
+      `<label><input type="checkbox" data-proposal-key="${html(line.key)}" ${value==='TEXT'?'checked':''}> Escrever texto padrão</label>`:
+      `<select data-proposal-key="${html(line.key)}" style="min-width:250px;max-width:360px">
+        <option value="" ${!value?'selected':''}>Não preencher</option>
+        ${row.existingSkill?`<option value="__keep" ${value==='__keep'?'selected':''}>Preservar registro existente</option>`:''}
+        ${options.map((opt,i)=>`<option value="${html(opt.value)}" ${String(opt.value)===String(value)?'selected':''}>
+          ${opt.manualOnly?'⚠ ':''}${html(textoHabilidade(opt)==='Habilidade disponível no SEGES'?
+            'Opção '+(i+1)+' (sem descrição)':textoHabilidade(opt))}</option>`).join('')}
+       </select>`;
+    const methods=line.manual?'Texto padrão':(!value||value==='__keep'?'Não alterar':
+      `<div style="display:flex;flex-direction:column;gap:5px">
+        ${[0,1].map(slot=>`<label style="display:flex;align-items:center;gap:5px;font-size:11px">
+          <span>${slot+1}.</span><select data-method-key="${html(line.key)}" data-method-slot="${slot}"
+            style="width:245px;max-width:100%;padding:5px">
+            <option value="">Escolher metodologia...</option>
+            ${line.methodOptions.map(name=>`<option value="${html(name)}"
+              ${chaveMetodologia(line.methodologies[slot])===chaveMetodologia(name)?'selected':''}>${html(name)}</option>`).join('')}
+          </select></label>`).join('')}
+       </div>`);
+    return `<tr><td>${html(cls.name)}</td><td>${week.week}</td><td>${row.index+1}</td>
+      <td style="text-align:left">${html(row.discipline)}${row.existingSkill?' · já preenchida':''}</td>
+      <td style="text-align:left">${skillSelector}</td>
+      <td style="text-align:left">${methods}</td>
+      <td title="${html(history.join(' → '))}" style="font-size:11px;color:#63768a">
+        ${html(history.filter(Boolean).slice(0,5).join(', ')||'Sem histórico curricular')}</td></tr>`;
+  }).join('');
+  const root=modal(`<h3>Conferir habilidades e metodologias</h3>
+    <p class="hint">Nenhum plano foi gravado. As duas metodologias sugeridas são <b>Aula expositiva dialogada</b> e <b>Resolução de exercícios</b>. É possível trocar cada uma. Se você alterar uma metodologia, será perguntado se deseja replicá-la nas aulas equivalentes das outras turmas do mesmo ano.</p>
+    <div class="scroll"><table><thead><tr>
+      <th>Turma</th><th>Semana</th><th>Aula</th><th>Disciplina</th><th>Habilidade</th>
+      <th>Metodologias (duas)</th><th>Últimos planos</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <p class="hint" id="seges-v3-warning">${result.warnings.length?html(result.warnings.join(' | ')):''}</p>
+    <p id="seges-v3-message" class="hint">Confira cada habilidade e as duas metodologias. O programa não escolherá Aprendizagem Baseada em Jogos automaticamente. Se alguma opção não existir no SEGES, escolha outra ou marque a aula como Não preencher.</p>
+    <div class="actions">
+      <button id="seges-v3-back">Voltar à tabela</button>
+      <button id="seges-v3-cancel" class="danger">Cancelar</button>
+      <button id="seges-v3-approve" class="primary">Aprovar e preencher</button>
+    </div>`);
+  $('#seges-v3-back',root).onclick=()=>{quadroAtual.review=null;abrirTabelaSemRecarregar();};
+  $('#seges-v3-cancel',root).onclick=cancelar;
+  $('#seges-v3-approve',root).onclick=()=>aprovarEExecutar().catch(falhar);
+  root.onchange=event=>{
+    const methodControl=event.target.closest('[data-method-key]');
+    const skillControl=event.target.closest('[data-proposal-key]');
+    if(!methodControl&&!skillControl)return;
+    const scroll=$('.scroll',root);
+    const previousTop=scroll?.scrollTop||0,previousLeft=scroll?.scrollLeft||0;
+    if(methodControl){
+      const key=methodControl.dataset.methodKey;
       const source=quadroAtual.review?.suggested.find(item=>item.key===key);
-      if(source?.groupKey && control.value && control.value!=='__keep'){
-        const selectedSkill=source.options.find(item=>String(item.value)===String(control.value));
+      if(!source)return;
+      const controls=$$('[data-method-key]',root).filter(el=>el.dataset.methodKey===key);
+      const desired=[0,1].map(slot=>controls.find(el=>Number(el.dataset.methodSlot)===slot)?.value||'').filter(Boolean);
+      quadroAtual.methodOverrides.set(key,desired);
+      const peers=(quadroAtual.review?.suggested||[]).filter(item=>
+        item.key!==key && item.groupKey && item.groupKey===source.groupKey &&
+        !item.row.existingSkill && item.value && item.value!=='__keep');
+      if(peers.length && confirm('Aplicar também esta alteração de metodologia às '+
+          peers.length+' aula(s) equivalentes das outras turmas do mesmo ano?\n\n'+
+          (desired.join(' + ')||'(nenhuma metodologia)'))){
+        let changed=0;
+        for(const peer of peers){
+          const mapping=mapearMetodologias(desired,peer.methodOptions);
+          if(mapping.length===desired.length){
+            quadroAtual.methodOverrides.set(peer.key,mapping);
+            changed++;
+          }
+        }
+        if(changed<peers.length)
+          log('Aplicação nas turmas equivalentes: '+changed+'/'+peers.length+
+            '. Algumas aulas não disponibilizaram todas as metodologias escolhidas.');
+      }
+    }else{
+      const key=skillControl.dataset.proposalKey;
+      quadroAtual.overrides.set(key,skillControl.type==='checkbox'?
+        (skillControl.checked?'TEXT':''):skillControl.value);
+      quadroAtual.methodOverrides.delete(key);
+      const source=quadroAtual.review?.suggested.find(item=>item.key===key);
+      if(source?.groupKey && skillControl.value && skillControl.value!=='__keep'){
+        const selectedSkill=source.options.find(item=>String(item.value)===String(skillControl.value));
         if(selectedSkill){
           for(const peer of quadroAtual.review.suggested){
-            if(peer.key===key||peer.groupKey!==source.groupKey||peer.row.existingSkill)continue;
+            if(peer.key===key || peer.groupKey!==source.groupKey || peer.row.existingSkill)continue;
             const equivalent=mapearHabilidade(selectedSkill,peer.options);
-            if(equivalent)quadroAtual.overrides.set(peer.key,equivalent.value);
+            if(equivalent){
+              quadroAtual.overrides.set(peer.key,equivalent.value);
+              quadroAtual.methodOverrides.delete(peer.key);
+            }
           }
         }
       }
-      mostrarPrevia();
-      const newScroll=$('.scroll',$('#seges-v3-overlay'));
-      if(newScroll){newScroll.scrollTop=previousTop;newScroll.scrollLeft=previousLeft;}
-    };
-  }
+    }
+    mostrarPrevia();
+    const fresh=$('.scroll',$('#seges-v3-overlay'));
+    if(fresh){fresh.scrollTop=previousTop;fresh.scrollLeft=previousLeft;}
+  };
+}
+
   function abrirTabelaSemRecarregar(){
     const root=modal(`<h3>Escolher turmas e semanas</h3><p class="hint">Ajuste as células e revise novamente.</p>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><label>Semanas por turma <select id="seges-v3-quantity"><option>2</option><option>3</option><option>4</option><option>1</option></select></label>
