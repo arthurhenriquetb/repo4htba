@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.0.1**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.1.0**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -27,6 +27,15 @@ Na lista de Planos Semanais (`/weekly_plans`), clique em **Preencher planos**. O
 - Clique em **Aprovar e preencher** e confirme a operação **uma vez**. Só então a automação tenta salvar os planos.
 
 **Não há aprovação separada por turma.** O usuário confere o conjunto inteiro antes de começar.
+
+### Sugestões automáticas e simetria entre turmas (v3.1)
+
+- **IDs numéricos** como `89423` são identificadores internos do SEGES, não nomes de habilidades. O histórico e a revisão mostram **códigos curriculares ou descrições**, quando disponibilizados pelo sistema.
+- O planejador **já seleciona uma sugestão para cada aula com opções válidas no dropdown**. Você apenas confere e altera se necessário; a escolha manual só é inevitável quando não há nenhuma habilidade compatível disponível.
+- Turmas da **mesma etapa/ano** usam preferencialmente a **mesma habilidade para a mesma disciplina, semana e posição da aula**. A comparação usa o código ou texto curricular, mesmo que os IDs sejam diferentes entre turmas.
+- Quando históricos das turmas diferem, o programa usa a sugestão mais adiantada entre as equivalentes. **Turmas de séries distintas não são sincronizadas.**
+- Quando você alterar uma habilidade na revisão, o programa replica a escolha para aulas equivalentes **ainda não preenchidas**, se elas oferecerem a mesma habilidade. Registros preexistentes são preservados por padrão.
+- Se o SEGES não disponibilizar a habilidade equivalente em uma turma, o programa mantém uma sugestão própria e apresenta o aviso na revisão, em vez de forçar outro valor.
 
 ### Como o planejador escolhe habilidades
 
@@ -91,7 +100,7 @@ As versões independentes e anteriores estão guardadas em [SEGES/arquivo](SEGES
 - A **sintaxe JavaScript** foi verificada.
 - Foram testados cenários simulados de semana sem aulas, aviso explícito de ausência de aulas e páginas inválidas; os dois primeiros são ignorados e as páginas inválidas provocam erro seguro.
 - Foram corrigidas as consultas de múltiplas aulas e campos do formulário, para evitar que o script interpretasse uma aula isolada como a lista inteira.
-- A seleção automática de **2 ou 4 semanas após a última planejada**, a filtragem de habilidades por ano escolar e a progressão de habilidades foram testadas com **dados simulados**.
+- A seleção automática de **2 ou 4 semanas após a última planejada**, a filtragem de habilidades por ano escolar, a progressão curricular e a simetria entre turmas com IDs internos diferentes foram testadas com **dados simulados**.
 - **Não foi possível testar o carregamento e o salvamento reais com a sessão autenticada do SEGES**. Em especial, o formulário interno depende de o site permitir a abertura de páginas dentro da mesma guia. Se isso for bloqueado, o programa deverá parar em vez de contornar essa restrição.
 - Comece testando **uma turma e uma semana**, confira as sugestões e o registro salvo no SEGES antes de executar lotes maiores.
 
