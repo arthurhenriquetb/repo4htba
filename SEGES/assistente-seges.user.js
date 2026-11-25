@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.0.1
+// @version      3.1.0
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -2226,8 +2226,43 @@ function iniciarModuloPlanos() {
     }
     return [...seen.values()];
   }
+  function codigoHabilidade(label) {
+  const text=String(label||'').toUpperCase().replace(/\s/g,'');
+  const match=text.match(/EF0?[1-9]CI\d{2}[A-Z]?|EM13(?:CNT|MAT|LGG|CHS)\d{3}/);
+  return match?match[0].replace(/^EF([1-9])CI/,'EF0$1CI'):'';
+}
+
+  function chaveHabilidade(opt) {
+  if(!opt)return '';
+  const label=String(opt.label||'').trim();
+  const codigo=codigoHabilidade(label);
+  if(codigo)return 'code:'+codigo;
+  const texto=normal(label).replace(/^\s*(?:habilidade|objeto de conhecimento)\s*:?\s*/,'')
+    .replace(/[\s\u00a0]+/g,' ').replace(/[.!;:]+$/,'').trim();
+  if(texto&&!/^(?:sem habilidade|nenhuma habilidade|selecione|selecione uma habilidade|escolha uma habilidade|--|-|\d+)$/i.test(texto))
+    return 'text:'+texto;
+  return 'id:'+String(opt.value||''); // Apenas comparador interno. Nunca exibir identificadores ao usuário.
+}
+
+  function textoHabilidade(opt) {
+  if(!opt)return 'Habilidade não identificada';
+  const title=String(opt.label||'').trim();
+  return !title||/^\d+$/.test(title)||/^(?:sem habilidade|nenhuma habilidade)$/i.test(normal(title))?
+    'Habilidade disponível no SEGES' : title;
+}
+
+  function mesmaHabilidade(a,b) {
+  return !!chaveHabilidade(a) && chaveHabilidade(a)===chaveHabilidade(b);
+}
+
+  function mapearHabilidade(ref,options) {
+  if(!ref)return null;
+  const choices=options||[];
+  return choices.find(opt=>mesmaHabilidade(ref,opt))||null;
+}
+
   function classificarHabilidade(label) {
-    const code=String(label||'').toUpperCase().replace(/\s/g,'');
+    const code=codigoHabilidade(label);
     const ef=code.match(/EF(0[1-9])CI/);
     if(ef)return 'EF'+Number(ef[1]);
     if(/EM13(?:CNT|MAT|LGG|CHS)/.test(code))return 'EM';
@@ -2261,6 +2296,8 @@ function iniciarModuloPlanos() {
       const existingText=String(textarea?.value||'').trim();
       const sel=$('.structured-weekly-plan-id-select',tr);
       const existingSkill=String(sel?.value||'').trim();
+      const skillOption=Array.from(sel?.options||[]).find(opt=>String(opt.value)===existingSkill);
+      const existingSkillLabel=String(skillOption?.textContent||'').trim();
       const profile=PERFIS.find(item=>item.regex.test(discipline));
       const kind=profile?'manual':CIENCIAS.test(discipline)?'science':'other';
       const selections=(selector)=>$$(selector,tr).flatMap(el=>Array.from(el.selectedOptions||[])
@@ -2268,13 +2305,20 @@ function iniciarModuloPlanos() {
       const hasKnowledge=selections('.structured-weekly-plan-knowledges-select').length>0;
       const hasMethod=selections('.structured-weekly-plan-methodologies-select').length>0;
       const evaluation=$('.structured-weekly-plan-evaluation-select',tr)?.value||'';
-      return {index,discipline,date,kind,existingText,existingSkill,hasKnowledge,hasMethod,evaluation,
+      return {index,discipline,date,kind,existingText,existingSkill,existingSkillLabel,hasKnowledge,hasMethod,evaluation,
         opts:kind==='science'?opcoesDaAula(tr):[],manualText:profile?.text||''};
     });
   }
-  function habilidadeRecente(form){
+  function habilidadeRecente(form,disciplina=null,ordem=null){
     const science=form?.rows?.filter(row=>row.kind==='science'&&row.existingSkill)||[];
-    return science.length ? science[science.length-1].existingSkill : null;
+    const candidates=disciplina
+      ? science.filter(row=>normal(row.discipline)===normal(disciplina))
+      : science;
+    const relevant=Number.isInteger(ordem) && candidates[ordem] ? candidates[ordem] : candidates.at(-1);
+    if(!relevant)return null;
+    const ref=relevant.opts.find(opt=>String(opt.value)===String(relevant.existingSkill))||
+      {value:relevant.existingSkill,label:relevant.existingSkillLabel||''};
+    return {value:String(ref.value),label:String(ref.label||''),key:chaveHabilidade(ref)};
   }
   async function lerSemana(cls,week) {
     const key=cls.id+':'+week.week;
