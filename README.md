@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.0**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.2**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -81,6 +81,8 @@ O botão **Parar** cancela as operações pendentes. Depois de uma interrupção
 **Importante:** registros que o SEGES já recebeu podem permanecer salvos mesmo após fechar a guia ou interromper uma operação. Confira-os diretamente no SEGES antes de executar novamente.
 
 ### Excluir planos de várias turmas
+
+**Correção v3.2.2:** a seleção de planos para exclusão agora reconhece corretamente todas as caixas marcadas, atualiza o contador e habilita **Excluir planos marcados**. Foi testada com marcação de célula individual, coluna, turma e comandos selecionar tudo/desmarcar tudo em simulação. A exclusão efetiva ainda depende de teste autenticado no SEGES.
 
 A tabela de exclusão permite **seleção individual e em lote**:
 
