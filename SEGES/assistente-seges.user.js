@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.2.3
+// @version      3.2.4
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -3133,10 +3133,17 @@ function iniciarModuloPlanos() {
       csrf:$('meta[name="csrf-token"]',doc)?.content||''};
   }
   for(const link of $$('a[data-method],a[data-turbo-method],button[data-method]',doc)){
-    if(String(link.dataset.method||link.getAttribute('data-turbo-method')||'').toLowerCase()!=='delete')continue;
+    const railsMethod=String(link.getAttribute('data-method')||'').toLowerCase();
+    const turboMethod=String(link.getAttribute('data-turbo-method')||'').toLowerCase();
+    if(railsMethod!=='delete'&&turboMethod!=='delete')continue;
     const url=urlSeges(link.getAttribute('href')||link.getAttribute('formaction')||'');
     if(!url||!/^\/weekly_plans\/\d+\/?$/.test(url.pathname))continue;
-    return {url:url.href,method:'DELETE',fields:[],
+    // Rails UJS data-method="delete" sends POST with _method=delete.
+    // Turbo data-turbo-method="delete" sends an HTTP DELETE request.
+    if(railsMethod==='delete')return {url:url.href,method:'POST',
+      fields:[['_method','delete']],transport:'rails-ujs',
+      csrf:$('meta[name="csrf-token"]',doc)?.content||''};
+    return {url:url.href,method:'DELETE',fields:[],transport:'turbo',
       csrf:$('meta[name="csrf-token"]',doc)?.content||''};
   }
   return null;
@@ -3163,8 +3170,10 @@ function iniciarModuloPlanos() {
   const fields=new URLSearchParams();
   for(const [key,value] of control.fields)fields.append(key,value);
   if(!csrf&&!fields.has('authenticity_token'))throw Error('Token de segurança do SEGES ausente.');
-  const headers={'Accept':'text/html,application/json','X-Requested-With':'XMLHttpRequest'};
+  const headers={'Accept':'text/html,application/xhtml+xml'};
   if(csrf)headers['X-CSRF-Token']=csrf;
+  if(control.transport==='rails-ujs' && csrf && !fields.has('authenticity_token'))
+    fields.set('authenticity_token',csrf);
   const options={method:control.method,credentials:'same-origin',signal:controller.signal,redirect:'follow',headers};
   if(control.method==='POST'){
     options.body=fields;
@@ -3299,6 +3308,7 @@ function iniciarModuloPlanos() {
       const results=[];
       let etapa='Conferência dos comandos de exclusão';
       let contexto='Nenhum plano foi enviado para exclusão';
+      let ultimoMetodo='Nenhum comando foi enviado';
       try{
         // Verificar TODOS os comandos antes da primeira modificação.
         // Se qualquer plano não oferecer exclusão oficial, parar sem deletar nenhum.
@@ -3318,6 +3328,9 @@ function iniciarModuloPlanos() {
           verificarAtivo();
           contexto=cls.name+' · semana '+week.week;
           status('Excluindo '+contexto);
+          ultimoMetodo=command.method==='POST' && command.fields?.some(field=>field[0]==='_method'&&field[1]==='delete')
+            ? 'POST com _method=delete' : command.method;
+          log('Comando oficial: '+ultimoMetodo+' · '+urlSeges(command.url)?.pathname);
           await executarExclusaoOficial(command);
           etapa='Confirmação do resultado';
           if(!await verificarExclusao(week,cls))
@@ -3341,6 +3354,7 @@ function iniciarModuloPlanos() {
           'SEGES • Assistente '+ '3.2.3',
           'Etapa: '+etapa,
           'Último plano examinado: '+contexto,
+          'Último método enviado: '+ultimoMetodo,
           'Erro: '+reason,
           'Exclusões verificadas: '+results.length,
           ...results.map(value=>'CONFIRMADO: '+value)
