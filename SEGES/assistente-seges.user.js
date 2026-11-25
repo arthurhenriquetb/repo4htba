@@ -2771,6 +2771,15 @@ function iniciarModuloPlanos() {
   if(!actions.length){alert('Nenhum campo foi selecionado para preencher.');return;}
   const unresolved=proposal.filter(item=>!item.manual&&!item.value&&!item.row.existingSkill);
   const changedUnknown=actions.filter(item=>!item.manual && item.options.find(o=>o.value===item.value)?.manualOnly);
+  const withoutTwo=actions.filter(item=>!item.manual&&!duasMetodologiasValidas(item.methodologies));
+  if(withoutTwo.length){
+    const examples=withoutTwo.slice(0,5).map(item=>
+      item.cls.name+' · semana '+item.week.week+' · aula '+(item.row.index+1)).join('\n');
+    alert('Antes de aprovar, escolha DUAS metodologias diferentes em cada aula.\n\n'+
+      withoutTwo.length+' aula(s) ainda precisam de revisão:\n'+examples+
+      '\n\nCaso o SEGES não ofereça duas metodologias, marque a aula como Não preencher.');
+    return;
+  }
   let message='Confirmar '+actions.length+' aula(s) de '+new Set(actions.map(a=>a.cls.id)).size+
     ' turma(s), distribuídas em '+new Set(actions.map(a=>a.cls.id+':'+a.week.week)).size+' semana(s)?';
   if(unresolved.length)message+='\n\n'+unresolved.length+' aula(s) ficarão sem preencher porque você não selecionou uma habilidade.';
@@ -2941,6 +2950,45 @@ function iniciarModuloPlanos() {
   if(!Array.from(select.selectedOptions||[]).some(opt=>opt.value))selecionarExato(select,option.value,label);
 }
 
+  function duasMetodologiasValidas(methods){
+  return Array.isArray(methods) && methods.filter(Boolean).length===2 &&
+    chaveMetodologia(methods[0])!==chaveMetodologia(methods[1]);
+}
+
+  async function selecionarDuasMetodologias(block,nomes){
+  if(!duasMetodologiasValidas(nomes))
+    throw Error('É obrigatório aprovar duas metodologias diferentes para cada aula.');
+  const select=await esperarElemento(()=>$(
+    '.structured-weekly-plan-methodologies-select',block),4500);
+  if(!select)throw Error('O SEGES não apresentou o campo de metodologias.');
+  if(!select.multiple)
+    throw Error('O campo de metodologias do SEGES não permite selecionar duas opções simultaneamente.');
+  const findOptions=()=>{
+    const available=Array.from(select.options||[]);
+    const matched=nomes.map(name=>available.find(option=>
+      String(option.value)===String(name) ||
+      chaveMetodologia(option.textContent||option.value)===chaveMetodologia(name)));
+    if(matched.every(Boolean) && matched[0]!==matched[1])return matched;
+    return null;
+  };
+  const matches=await esperarElemento(findOptions,5500);
+  if(!matches)throw Error('As metodologias aprovadas não foram disponibilizadas pelo SEGES: '+nomes.join(' + '));
+  verificarAtivo();
+  const ids=matches.map(option=>String(option.value));
+  Array.from(select.options||[]).forEach(option=>{option.selected=matches.includes(option);});
+  const view=select.ownerDocument.defaultView;
+  select.dispatchEvent(new view.Event('input',{bubbles:true}));
+  select.dispatchEvent(new view.Event('change',{bubbles:true}));
+  if(view.jQuery){
+    try{view.jQuery(select).val(ids).trigger('change').trigger('change.select2');}catch(_){}
+  }
+  await dormir(200);
+  verificarAtivo();
+  const actual=Array.from(select.selectedOptions||[]).map(option=>String(option.value));
+  if(actual.length!==2 || !ids.every(value=>actual.includes(value)))
+    throw Error('O SEGES não confirmou as duas metodologias aprovadas; o envio foi interrompido.');
+}
+
   async function aplicarAulaNoFrame(group,action,doc) {
   verificarAtivo();
   const tr=$$('#weekly_plan tr.by-curriculum-discipline',doc)[action.row.index];
@@ -2996,7 +3044,9 @@ function iniciarModuloPlanos() {
     }
   }
   await escolherDependente(block,'.structured-weekly-plan-knowledges-select',choice.knowledges?.[0]||'','Objeto de conhecimento');
-  await escolherDependente(block,'.structured-weekly-plan-methodologies-select',choice.methodologies?.[0]||'','Metodologia');
+  // A lista de metodologias foi aprovada na revisão. Não escolher a primeira
+  // opção disponível nem reutilizar "Aprendizagem Baseada em Jogos" por engano.
+  await selecionarDuasMetodologias(block,action.methodologies);
   const evaluation=$('.structured-weekly-plan-evaluation-select',block);
   if(evaluation&&!evaluation.value&&Array.from(evaluation.options||[]).some(o=>o.value==='false'))
     selecionarExato(evaluation,'false','Avaliação');
