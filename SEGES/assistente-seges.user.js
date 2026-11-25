@@ -2428,55 +2428,162 @@ function iniciarModuloPlanos() {
   return safe[safe.length-1].value;
 }
   function gerarPropostas() {
-    const selected=quadroAtual.selected||[];
-    const suggested=[],warnings=[...(quadroAtual.historyWarnings||[])];
-    for(const cls of selected){
-      const timeline=new Map();
-      for(const form of arquivos.values()){
-        if(form.cls.id!==cls.id||!form.week.existing||!temPlano(form))continue;
-        timeline.set(form.week.week,{week:form.week.week,skill:habilidadeRecente(form),hasPlan:true});
+  const selected=quadroAtual.selected||[];
+  const suggested=[];
+  const warnings=[...(quadroAtual.historyWarnings||[])];
+  const contexts=selected.map(cls=>{
+    const timeline=new Map();
+    for(const form of arquivos.values()){
+      if(form.cls.id!==cls.id||!form.week.existing||!temPlano(form))continue;
+      timeline.set(form.week.week,{week:form.week.week,hasPlan:true,form,assignments:null});
+    }
+    return {cls,timeline};
+  });
+  const numbers=[...new Set(selected.flatMap(cls=>cls.weeks.map(week=>week.week)))]
+    .sort((a,b)=>a-b);
+  function skillFor(entry,discipline,ordinal) {
+    if(entry.form)return habilidadeRecente(entry.form,discipline,ordinal);
+    return entry.assignments?.get(normal(discipline)+'|'+ordinal)||null;
+  }
+  function referenceFor(line) {
+    const choice=line.options.find(opt=>String(opt.value)===String(line.value));
+    if(choice)return choice;
+    if(line.row.existingSkill){
+      return line.row.opts.find(opt=>String(opt.value)===String(line.row.existingSkill))||
+        {value:String(line.row.existingSkill),label:line.row.existingSkillLabel||''};
+    }
+    return null;
+  }
+  for(const weekNumber of numbers){
+    const stageLines=[];
+    const processed=[];
+    for(const context of contexts){
+      const {cls,timeline}=context;
+      const week=cls.weeks.find(item=>item.week===weekNumber);
+      if(!week)continue;
+      const form=arquivos.get(cls.id+':'+week.week);
+      if(!form){
+        warnings.push(cls.name+' · semana '+week.week+': formulário não encontrado.');
+        continue;
       }
-      for(const week of cls.weeks){
-        const form=arquivos.get(cls.id+':'+week.week);
-        if(!form){warnings.push(cls.name+' · semana '+week.week+': formulário ausente');continue;}
-        if(!form.rows.length){
-          warnings.push(cls.name+' · semana '+week.week+': sem aulas; ignorada automaticamente, sem preenchimento.');
-          continue;
+      if(!form.rows.length){
+        warnings.push(cls.name+' · semana '+week.week+': sem aulas; ignorada automaticamente.');
+        continue;
+      }
+      const ordinals=new Map();
+      const lines=[];
+      for(const row of form.rows){
+        if(row.kind==='other'||(row.kind==='manual'&&row.existingText))continue;
+        const disciplineKey=normal(row.discipline);
+        const ordinal=ordinals.get(disciplineKey)||0;
+        if(row.kind==='science')ordinals.set(disciplineKey,ordinal+1);
+        const key=cls.id+':'+week.week+':'+row.index;
+        const override=quadroAtual.overrides.has(key)?quadroAtual.overrides.get(key):undefined;
+        const stage=etapaCompativel(cls,row.opts);
+        const options=row.kind==='science'?validasParaTurma(row.opts,stage):[];
+        const recent=[...timeline.values()].filter(item=>item.hasPlan&&item.week<week.week)
+          .sort((a,b)=>b.week-a.week).slice(0,5)
+          .map(item=>({week:item.week,skill:skillFor(item,row.discipline,ordinal)}));
+        let suggestedValue=row.kind==='science'
+          ? sugerirHabilidade(recent,options,stage)
+          : 'TEXT';
+        if(row.kind==='science'&&row.existingSkill){
+          const existingAllowed=options.some(opt=>String(opt.value)===String(row.existingSkill));
+          suggestedValue=row.hasKnowledge&&(row.hasMethod||row.evaluation==='true')
+            ? '__keep'
+            : (existingAllowed?row.existingSkill:'__keep');
         }
-        const recent=[...timeline.values()].filter(h=>h.hasPlan&&h.week<week.week)
-          .sort((a,b)=>b.week-a.week).slice(0,5);
-        const realExisting=habilidadeRecente(form);
-        const first=form.rows.find(r=>r.kind==='science'&&!r.existingSkill&&!r.existingText);
-        const proposal=realExisting||sugerirHabilidade(recent,first?.opts||[],cls.stage);
-        let representative=realExisting||'';
-        for(const row of form.rows){
-          if(row.kind==='other'||(row.kind==='manual'&&row.existingText))continue;
-          // Aulas com registro existente também aparecem na revisão;
-          // a opção padrão é preservar ou complementar, nunca apagar.
-          const key=cls.id+':'+week.week+':'+row.index;
-          const override=quadroAtual.overrides.has(key)?quadroAtual.overrides.get(key):undefined;
-          const valid=validasParaTurma(row.opts,cls.stage);
-          let value=override===undefined
-            ? (row.kind==='science' ? (row.existingSkill
-                ? (row.hasKnowledge && (row.hasMethod || row.evaluation==='true') ? '__keep' : row.existingSkill)
-                : proposal) : 'TEXT')
-            : override;
-          if(row.kind==='science'&&value!=='__keep'&&value&&!valid.some(opt=>opt.value===value))
-            value=row.existingSkill?'__keep':'';
-          const candidate=row.kind==='science'?valid.find(opt=>opt.value===value):null;
-          const line={key,cls,week,row,value,options:valid,
-            history:recent.map(item=>item.skill||'sem habilidade'),
-            label:candidate?.label||'',manual:row.kind==='manual'};
-          suggested.push(line);
-          if(row.kind==='science'&&value&&value!=='__keep'&&representative==='')representative=value;
-          if(row.kind==='science'&&override!==undefined&&value&&value!=='__keep')representative=value;
+        const chosen=override!==undefined?override:suggestedValue;
+        let value=chosen;
+        if(row.kind==='science'&&value&&value!=='__keep'&&!options.some(opt=>String(opt.value)===String(value)))
+          value=row.existingSkill?'__keep':sugerirHabilidade(recent,options,stage);
+        const ability=options.find(opt=>String(opt.value)===String(value));
+        const referenceHistory=recent.filter(item=>item.skill).map(item=>textoHabilidade(item.skill));
+        const groupKey=row.kind==='science'
+          ? (stage||'turma:'+cls.id)+'|'+week.week+'|'+disciplineKey+'|'+ordinal
+          : null;
+        const line={
+          key,cls,week,row,value,options,
+          label:ability?textoHabilidade(ability):'',manual:row.kind==='manual',
+          stage,ordinal,groupKey,
+          history:referenceHistory,
+          historyCount:referenceHistory.length,
+          userOverride:override!==undefined
+        };
+        lines.push(line);
+        stageLines.push(line);
+        if(row.kind==='science'&&!row.existingSkill&&!options.length)
+          warnings.push(cls.name+' · semana '+week.week+' · '+row.discipline+
+            ' · aula '+(ordinal+1)+': o SEGES não apresentou habilidades no dropdown.');
+      }
+      processed.push({context,form,week,lines});
+    }
+    // A mesma etapa, disciplina, semana e ordem da aula recebe a mesma
+    // habilidade curricular, mesmo que os IDs do SEGES sejam distintos.
+    const groups=new Map();
+    for(const line of stageLines){
+      if(!line.groupKey)continue;
+      if(!groups.has(line.groupKey))groups.set(line.groupKey,[]);
+      groups.get(line.groupKey).push(line);
+    }
+    for(const group of groups.values()){
+      if(group.length<2)continue;
+      const candidates=group.map(line=>({
+        line,reference:referenceFor(line),
+        position:line.options.findIndex(opt=>String(opt.value)===String(line.value))
+      })).filter(item=>item.reference);
+      if(!candidates.length)continue;
+      candidates.sort((a,b)=>{
+        const aCode=codigoHabilidade(a.reference.label);
+        const bCode=codigoHabilidade(b.reference.label);
+        return Number(b.line.userOverride)-Number(a.line.userOverride) ||
+          Number(!!b.line.row.existingSkill)-Number(!!a.line.row.existingSkill) ||
+          b.line.historyCount-a.line.historyCount ||
+          bCode.localeCompare(aCode) ||
+          b.position-a.position;
+      });
+      const canonical=candidates[0].reference;
+      for(const line of group){
+        if(line.userOverride || line.row.existingSkill)continue;
+        const match=mapearHabilidade(canonical,line.options);
+        if(match){
+          line.value=match.value;
+          line.label=textoHabilidade(match);
+        }else if(!line.value && line.options.length){
+          line.value=line.options[0].value;
+          line.label=textoHabilidade(line.options[0]);
         }
-        if(week.existing)timeline.set(week.week,{week:week.week,skill:representative||realExisting||null,hasPlan:true});
-        else if(representative)timeline.set(week.week,{week:week.week,skill:representative,hasPlan:true});
+        if(!match && warnings.length<60){
+          warnings.push(line.cls.name+' · semana '+line.week.week+' · '+line.row.discipline+
+            ': não há opção equivalente à habilidade das outras turmas. Manteve a sugestão própria.');
+        }
       }
     }
-    return {suggested,warnings};
+    for(const item of processed){
+      const {context,form,week,lines}=item;
+      const assignments=new Map();
+      let newContent=false;
+      for(const line of lines){
+        if(line.manual){
+          if(line.value==='TEXT')newContent=true;
+          continue;
+        }
+        const opt=referenceFor(line);
+        if(opt){
+          assignments.set(normal(line.row.discipline)+'|'+line.ordinal,opt);
+          if(line.value && line.value!=='__keep' && !line.row.existingSkill)newContent=true;
+        }
+      }
+      if(week.existing&&temPlano(form)){
+        context.timeline.set(week.week,{week:week.week,hasPlan:true,form,assignments:null});
+      }else if(newContent){
+        context.timeline.set(week.week,{week:week.week,hasPlan:true,form:null,assignments});
+      }
+    }
+    suggested.push(...stageLines);
   }
+  return {suggested,warnings};
+}
   function mostrarPrevia() {
     const result=gerarPropostas();
     quadroAtual.review=result;
