@@ -2593,17 +2593,18 @@ function iniciarModuloPlanos() {
         `<select data-proposal-key="${html(line.key)}" style="min-width:260px;max-width:370px">
           <option value="" ${!value?'selected':''}>Não preencher</option>
           ${row.existingSkill?`<option value="__keep" ${value==='__keep'?'selected':''}>Manter habilidade existente</option>`:''}
-          ${options.map(opt=>`<option value="${html(opt.value)}" ${opt.value===value?'selected':''}>
-            ${opt.manualOnly?'⚠ ':''}${html(opt.label)}</option>`).join('')}
+          ${options.map((opt,i)=>`<option value="${html(opt.value)}" ${opt.value===value?'selected':''}>
+            ${opt.manualOnly?'⚠ ':''}${html(textoHabilidade(opt)==='Habilidade disponível no SEGES'
+              ? 'Opção '+(i+1)+' do currículo (descrição não exibida pelo SEGES)' : textoHabilidade(opt))}</option>`).join('')}
         </select>`;
       return `<tr><td>${html(cls.name)}</td><td>${week.week}</td><td>${row.index+1}</td>
         <td style="text-align:left">${html(row.discipline)}${row.existingSkill?' · já preenchida':''}</td>
         <td style="text-align:left">${select}</td>
-        <td title="${html(history.join(' → '))}" style="font-size:11px;color:#63768a">${html(history.filter(Boolean).slice(0,3).join(', ')||'Sem histórico')}</td></tr>`;
+        <td title="${html(history.join(' → '))}" style="font-size:11px;color:#63768a">${html(history.filter(Boolean).slice(0,5).join(', ')||'Sem histórico curricular')}</td></tr>`;
     }).join('');
     const existing=$('#seges-v3-overlay');
     const root=modal(`<h3>Conferir antes de preencher</h3>
-      <p class="hint">Nenhuma gravação foi feita. As habilidades são sugeridas com base nas <strong>cinco semanas anteriores com plano</strong>, sem percorrer todas as semanas. As escolhas nesta tabela são revisáveis.</p>
+      <p class="hint">Nenhuma gravação foi feita. As habilidades são sugeridas com base nas <strong>cinco semanas anteriores com plano</strong>. Turmas da mesma etapa recebem sugestões iguais para a mesma disciplina, semana e posição da aula. Alterar uma sugestão também atualiza as aulas equivalentes ainda não preenchidas.</p>
       <div class="scroll"><table><thead><tr><th>Turma</th><th>Semana</th><th>Aula</th><th>Disciplina</th><th>Habilidade / ação</th><th>Últimos planos</th></tr></thead><tbody>${rows}</tbody></table></div>
       <p class="hint" id="seges-v3-warning">${result.warnings.length?html(result.warnings.join(' | ')):''}</p>
       <p id="seges-v3-message" class="hint">${result.suggested.length} aula(s) encontradas. Semanas sem aulas são ignoradas automaticamente e não recebem salvamento. As opções com ⚠ não têm código de etapa reconhecido.</p>
@@ -2622,6 +2623,17 @@ function iniciarModuloPlanos() {
       const previousTop=scroller?.scrollTop||0,previousLeft=scroller?.scrollLeft||0;
       const key=control.dataset.proposalKey;
       quadroAtual.overrides.set(key,control.type==='checkbox'?(control.checked?'TEXT':''):control.value);
+      const source=quadroAtual.review?.suggested.find(item=>item.key===key);
+      if(source?.groupKey && control.value && control.value!=='__keep'){
+        const selectedSkill=source.options.find(item=>String(item.value)===String(control.value));
+        if(selectedSkill){
+          for(const peer of quadroAtual.review.suggested){
+            if(peer.key===key||peer.groupKey!==source.groupKey||peer.row.existingSkill)continue;
+            const equivalent=mapearHabilidade(selectedSkill,peer.options);
+            if(equivalent)quadroAtual.overrides.set(peer.key,equivalent.value);
+          }
+        }
+      }
       mostrarPrevia();
       const newScroll=$('.scroll',$('#seges-v3-overlay'));
       if(newScroll){newScroll.scrollTop=previousTop;newScroll.scrollLeft=previousLeft;}
