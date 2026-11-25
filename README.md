@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.3.0**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.3.1**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -49,6 +49,12 @@ A automação não escolhe mais a primeira metodologia do dropdown, o que anteri
 Na **tabela de revisão**, cada aula estruturada dispõe de **dois seletores de metodologia**. Você pode mudar qualquer um. Após uma alteração, o programa pergunta se deseja aplicar a mesma combinação às aulas equivalentes das **outras turmas do mesmo ano, na mesma semana, disciplina e posição da aula**. A aplicação só ocorre quando o SEGES disponibiliza essas opções na turma de destino; as aulas já preenchidas são preservadas por padrão.
 
 Se o SEGES não oferecer as duas metodologias desejadas, o programa mostra o problema na revisão e **não permite autorizar aquela aula com menos de duas metodologias diferentes**. Você poderá escolher alternativas disponíveis ou marcar **Não preencher**. O script não cria metodologias artificiais nem as substitui automaticamente por jogos.
+
+### Correção da tela reduzida ao canto (v3.3.1)
+
+A revisão de **Preencher planos** agora abre em um painel de tela cheia separado, construído em **Shadow DOM**. Isso isola completamente os elementos da revisão das regras de CSS do SEGES que podiam reduzir a janela a um quadradinho no canto superior esquerdo. O painel inicial é ocultado somente depois de abrir a área grande, e volta ao fechar/cancelar. A seleção de semanas, progresso, revisão paginada em 40 aulas, habilidades e metodologias continuam no mesmo fluxo. Nada é gravado antes da aprovação.
+
+**Testes:** verificação de sintaxe JavaScript, abertura e fechamento da área isolada e teste no Chromium com regras propositalmente conflitantes, com visualização de 1280 × 720 px. Ainda não há teste em sessão autenticada do SEGES.
 
 ### Interface de janela única (v3.3.0)
 
