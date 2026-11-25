@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.0.0
+// @version      3.0.1
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -2241,8 +2241,19 @@ function iniciarModuloPlanos() {
     }).map(opt=>({...opt,manualOnly:!classificarHabilidade(opt.label)}));
   }
   function lerAulas(doc,turma,week) {
-    const rows=$$('#weekly_plan tr.by-curriculum-discipline',doc);
-    if(!rows.length)throw Error('O formulário da semana '+week.week+' não exibiu as aulas esperadas.');
+    const rows=$('#weekly_plan tr.by-curriculum-discipline',doc);
+    if(!rows.length){
+      // Semana sem aulas (feriado, conselho, encerramento do trimestre etc.).
+      // Somente considerar ausência legítima em um formulário do SEGES ou numa
+      // página que declare explicitamente que não existem aulas.
+      const pageText=String(doc.body?.textContent||'').replace(/\s+/g,' ').trim();
+      const emptyNotice=/(?:n[aã]o\s+(?:h[aá]|existem?)\s+aulas?|nenhuma\s+aula|sem\s+aulas?|aulas?\s+n[aã]o\s+(?:cadastradas?|encontradas?))/i.test(pageText);
+      const isForm=!!$('#weekly_plan',doc);
+      if(!isForm && !emptyNotice){
+        throw Error('Não foi possível reconhecer o formulário nem confirmar ausência de aulas na semana '+week.week+'. Verifique a página no SEGES.');
+      }
+      return [];
+    }
     return rows.map((tr,index)=>{
       const discipline=String(tr.querySelectorAll('td')[1]?.textContent||'').trim();
       const date=$('input[name*="[date]"]',tr)?.value||'';
@@ -2293,9 +2304,12 @@ function iniciarModuloPlanos() {
       progresso={atual:0,total:chosen.size};atualizarProgresso();
       for(const {cls,week} of chosen.values()){
         verificarAtivo();
-        await lerSemana(cls,week);
+        const form=await lerSemana(cls,week);
         progresso.atual++;atualizarProgresso();
-        status('Lendo semana escolhida: '+cls.name+' · '+week.week);
+        if(!form.rows.length)
+          status('Sem aulas: '+cls.name+' · semana '+week.week+' — ignorada (sem gravação).');
+        else
+          status('Lendo semana escolhida: '+cls.name+' · '+week.week);
       }
       const warnings=[];
       // Para cada semana escolhida, olhar somente para trás. Encontrar no máximo
@@ -2354,6 +2368,10 @@ function iniciarModuloPlanos() {
       for(const week of cls.weeks){
         const form=arquivos.get(cls.id+':'+week.week);
         if(!form){warnings.push(cls.name+' · semana '+week.week+': formulário ausente');continue;}
+        if(!form.rows.length){
+          warnings.push(cls.name+' · semana '+week.week+': sem aulas; ignorada automaticamente, sem preenchimento.');
+          continue;
+        }
         const recent=[...timeline.values()].filter(h=>h.hasPlan&&h.week<week.week)
           .sort((a,b)=>b.week-a.week).slice(0,5);
         const realExisting=habilidadeRecente(form);
@@ -2410,7 +2428,7 @@ function iniciarModuloPlanos() {
       <p class="hint">Nenhuma gravação foi feita. As habilidades são sugeridas com base nas <strong>cinco semanas anteriores com plano</strong>, sem percorrer todas as semanas. As escolhas nesta tabela são revisáveis.</p>
       <div class="scroll"><table><thead><tr><th>Turma</th><th>Semana</th><th>Aula</th><th>Disciplina</th><th>Habilidade / ação</th><th>Últimos planos</th></tr></thead><tbody>${rows}</tbody></table></div>
       <p class="hint" id="seges-v3-warning">${result.warnings.length?html(result.warnings.join(' | ')):''}</p>
-      <p id="seges-v3-message" class="hint">${result.suggested.length} aula(s) selecionada(s). As opções com ⚠ não têm código de etapa reconhecido.</p>
+      <p id="seges-v3-message" class="hint">${result.suggested.length} aula(s) encontradas. Semanas sem aulas são ignoradas automaticamente e não recebem salvamento. As opções com ⚠ não têm código de etapa reconhecido.</p>
       <div class="actions">
         <button id="seges-v3-back">Voltar à tabela</button>
         <button id="seges-v3-cancel" class="danger">Cancelar</button>
@@ -2528,7 +2546,7 @@ function iniciarModuloPlanos() {
 
   function verificarAulasNaoMudaram(group,doc) {
   const rows=$('#weekly_plan tr.by-curriculum-discipline',doc);
-  if(!rows.length)throw Error('O SEGES não apresentou o formulário da semana.');
+  if(!rows.length)throw Error('O formulário mudou ou perdeu as aulas antes do salvamento. Nenhuma gravação será feita.');
   for(const action of group.items){
     const original=action.row,actual=rows[original.index];
     if(!actual)throw Error('Aula '+(original.index+1)+' desapareceu do formulário.');
