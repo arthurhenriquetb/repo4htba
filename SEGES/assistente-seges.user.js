@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.2.0
+// @version      3.2.1
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
