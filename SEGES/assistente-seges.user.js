@@ -2147,7 +2147,7 @@ function iniciarModuloPlanos() {
   async function abrirTabela() {
     iniciarOperacao();
     arquivos=new Map();substituicoes=new Map();ultimoRelatorio=null;
-    quadroAtual={stages:new Map(),review:null};
+    quadroAtual={stages:new Map(),review:null,methodOverrides:new Map()};
     const root=modal(`<h3>Escolher turmas e semanas</h3>
       <p class="hint">Uma tabela para todas as turmas. As próximas semanas sem plano, após a última já planejada, vêm marcadas (duas por turma). Você pode ajustar a quantidade e qualquer célula.</p>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -2306,7 +2306,10 @@ function iniciarModuloPlanos() {
       const hasKnowledge=selections('.structured-weekly-plan-knowledges-select').length>0;
       const hasMethod=selections('.structured-weekly-plan-methodologies-select').length>0;
       const evaluation=$('.structured-weekly-plan-evaluation-select',tr)?.value||'';
-      return {index,discipline,date,kind,existingText,existingSkill,existingSkillLabel,hasKnowledge,hasMethod,evaluation,
+      const availableMethods=$('.structured-weekly-plan-methodologies-select option',tr)
+        .filter(option=>String(option.value||'').trim())
+        .map(option=>String(option.textContent||option.value).trim());
+      return {index,discipline,date,kind,existingText,existingSkill,existingSkillLabel,hasKnowledge,hasMethod,evaluation,availableMethods,
         opts:kind==='science'?opcoesDaAula(tr):[],manualText:profile?.text||''};
     });
   }
@@ -2385,6 +2388,7 @@ function iniciarModuloPlanos() {
       quadroAtual.selected=selected;
       quadroAtual.historyWarnings=warnings;
       quadroAtual.overrides=new Map();
+      quadroAtual.methodOverrides=new Map();
       mostrarPrevia();
       status('Sugestões prontas. Nenhum plano foi salvo.');
     }catch(error){falhar(error);}
@@ -2427,6 +2431,41 @@ function iniciarModuloPlanos() {
   // para não reiniciar indevidamente a sequência.
   return safe[safe.length-1].value;
 }
+  function chaveMetodologia(texto){
+  const clean=normal(texto).replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+  if(/\baula\b/.test(clean)&&/\bexpositiva\b/.test(clean)&&/\bdialogada\b/.test(clean))
+    return 'aula-expositiva-dialogada';
+  if(/\bresolucao\b/.test(clean)&&/\bexercicios\b/.test(clean))
+    return 'resolucao-exercicios';
+  return clean;
+}
+
+  function opcoesMetodologia(row,habilidade){
+  const all=habilidade?.methodologies?.length?habilidade.methodologies:(row.availableMethods||[]);
+  const seen=new Map();
+  for(const item of all){
+    const label=String(item||'').trim();
+    const key=chaveMetodologia(label);
+    if(label&&key&&!seen.has(key))seen.set(key,label);
+  }
+  return [...seen.values()];
+}
+
+  function sugerirMetodologias(available){
+  const results=[];
+  for(const sought of ['aula-expositiva-dialogada','resolucao-exercicios']){
+    const found=(available||[]).find(item=>chaveMetodologia(item)===sought);
+    if(found)results.push(found);
+  }
+  return results;
+}
+
+  function mapearMetodologias(nomes,available){
+  return (nomes||[]).map(name=>(available||[]).find(item=>
+    chaveMetodologia(item)===chaveMetodologia(name))).filter(Boolean)
+    .filter((value,i,array)=>array.findIndex(other=>chaveMetodologia(other)===chaveMetodologia(value))===i);
+}
+
   function gerarPropostas() {
   const selected=quadroAtual.selected||[];
   const suggested=[];
@@ -2502,8 +2541,14 @@ function iniciarModuloPlanos() {
         const groupKey=row.kind==='science'
           ? (stage||'turma:'+cls.id)+'|'+week.week+'|'+disciplineKey+'|'+ordinal
           : null;
+        const methodOptions=row.kind==='science' && value && value!=='__keep'
+          ? opcoesMetodologia(row,ability) : [];
+        const overrideMethods=quadroAtual.methodOverrides?.get(key);
+        const methodologies=overrideMethods!==undefined
+          ? mapearMetodologias(overrideMethods,methodOptions)
+          : sugerirMetodologias(methodOptions);
         const line={
-          key,cls,week,row,value,options,
+          key,cls,week,row,value,options,methodOptions,methodologies,
           label:ability?textoHabilidade(ability):'',manual:row.kind==='manual',
           stage,ordinal,groupKey,
           history:referenceHistory,
@@ -2512,6 +2557,9 @@ function iniciarModuloPlanos() {
         };
         lines.push(line);
         stageLines.push(line);
+        if(row.kind==='science'&&value&&value!=='__keep'&&methodologies.length<2)
+          warnings.push(cls.name+' · semana '+week.week+' · '+row.discipline+' · aula '+(ordinal+1)+
+            ': não foi possível sugerir as duas metodologias padrão. Escolha duas na revisão; nunca será escolhida Aprendizagem Baseada em Jogos como substituta.');
         if(row.kind==='science'&&!row.existingSkill&&!options.length)
           warnings.push(cls.name+' · semana '+week.week+' · '+row.discipline+
             ' · aula '+(ordinal+1)+': '+(row.opts.length
