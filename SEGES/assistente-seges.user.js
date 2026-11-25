@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.2.7
+// @version      3.2.8
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -1898,7 +1898,7 @@ function iniciarModuloPlanos() {
   function cancelar() {
     cancelado=true;ativo=false;controller?.abort();
     if(iframe){iframe.remove();iframe=null;}
-    if(quadro){quadro.remove();quadro=null;}
+    if(quadro){fecharModal();}
     operacaoAtual=null;
     status('Interrompido. Nada foi guardado. Recarregue a guia para iniciar outra operação.');
     atualizarBotoes();
@@ -1912,6 +1912,8 @@ function iniciarModuloPlanos() {
   }
   function status(msg) {
     const el=$('#seges-v3-status');if(el)el.textContent=msg;
+    const front=$('#seges-v3-modal-status');
+    if(front)front.textContent=msg;
     log(msg);
   }
   function atualizarProgresso() {
@@ -1919,6 +1921,8 @@ function iniciarModuloPlanos() {
     const fill=$('#seges-v3-progress'),label=$('#seges-v3-percentage');
     if(fill)fill.style.width=valor+'%';
     if(label)label.textContent=valor+'%';
+    const front=$('#seges-v3-modal-progress-fill');
+    if(front)front.style.width=valor+'%';
   }
   function iniciarOperacao() {
     if(cancelado)throw Error('Esta execução foi cancelada. Recarregue a guia antes de iniciar outra.');
@@ -1949,7 +1953,7 @@ function iniciarModuloPlanos() {
       #seges-v3-panel button.danger,#seges-v3-overlay button.danger{background:#be3e43;color:#fff}
       #seges-v3-panel button:disabled,#seges-v3-overlay button:disabled{opacity:.45;cursor:default}
       #seges-v3-overlay{position:fixed;inset:0;background:#15243ab0;z-index:2147483640;display:flex;align-items:center;justify-content:center;padding:15px;font:13px/1.4 Arial,sans-serif;color:#283d52}
-      #seges-v3-overlay .dialog{background:white;border-radius:12px;padding:17px;max-width:min(1080px,97vw);max-height:92vh;overflow:auto;width:100%;box-shadow:0 8px 40px #1115}
+      #seges-v3-overlay .seges-v3-dialog{background:white;border-radius:12px;padding:17px;max-width:min(1080px,97vw);max-height:92vh;overflow:auto;width:100%;box-shadow:0 8px 40px #1115}
       #seges-v3-overlay h3{font-size:17px;margin:0 0 9px}
       #seges-v3-overlay .actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px}
       #seges-v3-overlay table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}
@@ -1968,7 +1972,7 @@ function iniciarModuloPlanos() {
     estilos();
     if($('#seges-v3-panel'))return;
     const el=document.createElement('div');el.id='seges-v3-panel';
-    el.innerHTML=`<div class="head">SEGES • Assistente v3.2.7 — Planos</div><div class="body">
+    el.innerHTML=`<div class="head">SEGES • Assistente v3.2.8 — Planos</div><div class="body">
       <div id="seges-v3-status" style="margin-bottom:8px">Pronto. Nada será retomado depois que a guia for fechada.</div>
       <div style="height:9px;background:#e1eaf2;border-radius:8px;overflow:hidden"><div id="seges-v3-progress" style="height:100%;width:0;background:#1578b3"></div></div>
       <div id="seges-v3-percentage" style="font-size:11px;text-align:right">0%</div>
@@ -2005,12 +2009,57 @@ function iniciarModuloPlanos() {
     },{once:true});
   }
   function modal(content) {
+    // O SEGES tem seus próprios diálogos e sobreposições. Isolar o nosso:
+    // nome exclusivo da classe, maior z-index e portal fora do <body>.
     $('#seges-v3-overlay')?.remove();
-    const el=document.createElement('div');el.id='seges-v3-overlay';
-    el.innerHTML='<div class="dialog">'+content+'</div>';
-    document.body.appendChild(el);quadro=el;return el;
+    const panel=$('#seges-v3-panel');
+    if(panel)panel.style.setProperty('visibility','hidden','important');
+    const el=document.createElement('div');
+    el.id='seges-v3-overlay';
+    el.setAttribute('role','dialog');
+    el.setAttribute('aria-modal','true');
+    const fixed={
+      position:'fixed',inset:'0',display:'flex',
+      'align-items':'center','justify-content':'center',
+      'box-sizing':'border-box',padding:'14px',
+      'z-index':'2147483647',visibility:'visible',opacity:'1',
+      background:'rgba(16,28,44,.70)',overflow:'auto'
+    };
+    for(const [name,value] of Object.entries(fixed))
+      el.style.setProperty(name,value,'important');
+    el.innerHTML='<div class="seges-v3-dialog" role="document">'+
+      '<div id="seges-v3-modal-progress" style="font-size:12px;padding:7px 0 11px;margin-bottom:10px;border-bottom:1px solid #dce5ef">'+
+      '<div id="seges-v3-modal-status" style="white-space:normal;overflow-wrap:anywhere">Preparando...</div>'+
+      '<div style="margin-top:6px;height:6px;background:#e4edf3;border-radius:6px;overflow:hidden">'+
+      '<div id="seges-v3-modal-progress-fill" style="height:100%;width:0;background:#166fa5"></div>'+
+      '</div></div>'+content+'</div>';
+    const dialog=el.firstElementChild;
+    const surface={
+      display:'block',position:'relative',visibility:'visible',opacity:'1',
+      background:'#ffffff',color:'#283d52',
+      width:'min(1100px, calc(100vw - 28px))',
+      'max-width':'min(1100px, calc(100vw - 28px))',
+      'max-height':'calc(100vh - 28px)',
+      overflow:'auto',padding:'17px','box-sizing':'border-box',
+      'border-radius':'12px','box-shadow':'0 10px 44px rgba(0,0,0,.30)',
+      'flex-shrink':'0',margin:'auto'
+    };
+    for(const [name,value] of Object.entries(surface))
+      dialog.style.setProperty(name,value,'important');
+    // Evita que regras CSS do SEGES escondam o conteúdo da revisão.
+    document.documentElement.appendChild(el);
+    quadro=el;
+    const statusText=$('#seges-v3-status')?.textContent;
+    if(statusText)$('#seges-v3-modal-status',el).textContent=statusText;
+    atualizarProgresso();
+    return el;
   }
-  function fecharModal() {quadro?.remove();quadro=null;}
+  function fecharModal() {
+    quadro?.remove();
+    quadro=null;
+    const panel=$('#seges-v3-panel');
+    if(panel)panel.style.removeProperty('visibility');
+  }
   function baixar(name,content) {
     const blob=new Blob([content],{type:'text/plain;charset=utf-8'});
     const url=URL.createObjectURL(blob);const a=document.createElement('a');
@@ -2025,7 +2074,7 @@ function iniciarModuloPlanos() {
       .map(line=>line.replace(/(https?:\/\/[^\s?#)]+)\?[^\s)]+/g,'$1?[parâmetros ocultos]'))
       .join('\n');
     return [
-      'SEGES • Assistente 3.2.7',
+      'SEGES • Assistente 3.2.8',
       'Etapa: '+String(etapa||'Não identificada'),
       'Plano: '+String(contexto||'Não identificado'),
       'Erro: '+message,
@@ -2443,8 +2492,11 @@ function iniciarModuloPlanos() {
       quadroAtual.historyWarnings=warnings;
       quadroAtual.overrides=new Map();
       quadroAtual.methodOverrides=new Map();
+      status('Montando a tabela de sugestões para revisão...');
       mostrarPrevia();
-      status('Sugestões prontas. Nenhum plano foi salvo.');
+      if(!$('#seges-v3-overlay #seges-v3-approve'))
+        throw Error('Não foi possível abrir a tabela de revisão. Nenhum plano foi salvo.');
+      status('Revisão aberta. Confira e aprove somente quando estiver satisfeito.');
     }catch(error){falhar(error);}
     finally {encerrarOperacao();}
   }
@@ -2732,10 +2784,11 @@ function iniciarModuloPlanos() {
   }).join('');
   const root=modal(`<h3>Conferir habilidades e metodologias</h3>
     <p class="hint">Nenhum plano foi gravado. As duas metodologias sugeridas são <b>Aula expositiva dialogada</b> e <b>Resolução de exercícios</b>. É possível trocar cada uma. Se você alterar uma metodologia, será perguntado se deseja replicá-la nas aulas equivalentes das outras turmas do mesmo ano.</p>
+    <p class="hint"><strong>${result.suggested.length} aula(s) para conferir.</strong> ${result.suggested.length ? 'A tabela abaixo é editável.' : 'Nenhuma aula elegível encontrada. Volte à tabela e escolha outras semanas.'}</p>
     <div class="scroll"><table><thead><tr>
       <th>Turma</th><th>Semana</th><th>Aula</th><th>Disciplina</th><th>Habilidade</th>
       <th>Metodologias (duas)</th><th>Últimos planos</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>
+      <tbody>${rows || '<tr><td colspan="7" style="padding:18px">Não há aulas para revisar nas semanas selecionadas.</td></tr>'}</tbody></table></div>
     <p class="hint" id="seges-v3-warning">${result.warnings.length?html(result.warnings.join(' | ')):''}</p>
     <p id="seges-v3-message" class="hint">Confira cada habilidade e as duas metodologias. O programa não escolherá Aprendizagem Baseada em Jogos automaticamente. Se alguma opção não existir no SEGES, escolha outra ou marque a aula como Não preencher.</p>
     <div class="actions">
@@ -2745,6 +2798,7 @@ function iniciarModuloPlanos() {
     </div>`);
   $('#seges-v3-back',root).onclick=()=>{quadroAtual.review=null;abrirTabelaSemRecarregar();};
   $('#seges-v3-cancel',root).onclick=cancelar;
+  $('#seges-v3-approve',root).disabled=result.suggested.length===0;
   $('#seges-v3-approve',root).onclick=()=>aprovarEExecutar().catch(falhar);
   root.onchange=event=>{
     const methodControl=event.target.closest('[data-method-key]');
