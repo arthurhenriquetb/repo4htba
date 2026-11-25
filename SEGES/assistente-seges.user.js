@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.1.0
+// @version      3.2.0
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -3051,16 +3051,62 @@ function iniciarModuloPlanos() {
     const all=[...new Set([...map.values()].flatMap(x=>x.weeks.map(w=>w.week)))].sort((a,b)=>a-b);
     const rows=[...map.values()].map(({cls,weeks})=>{
       const weekMap=new Map(weeks.map(w=>[w.week,w]));
-      return `<tr><td><strong>${html(cls.name)}</strong></td>
+      return `<tr><td><label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+          <input type="checkbox" data-excluir-row="${html(cls.id)}" title="Selecionar todos os planos desta turma">
+          <strong>${html(cls.name)}</strong></label></td>
         ${all.map(n=>weekMap.has(n)?
           `<td><input type="checkbox" data-excluir-class="${html(cls.id)}" data-excluir-week="${n}"></td>`:
           '<td>·</td>').join('')}</tr>`;
     }).join('');
-    $('#seges-v3-del-table').innerHTML=`<div class="scroll"><table><thead><tr><th>Turma</th>${all.map(n=>`<th>${n}</th>`).join('')}</tr></thead>
-      <tbody>${rows}</tbody></table></div><p class="hint">Somente planos que já existem no SEGES aparecem com caixas de seleção.</p>`;
+    $('#seges-v3-del-table').innerHTML=`
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 10px">
+        <button type="button" id="seges-v3-del-all">Selecionar tudo</button>
+        <button type="button" id="seges-v3-del-none">Desmarcar tudo</button>
+        <strong id="seges-v3-del-count">0 planos selecionados</strong>
+      </div>
+      <div class="scroll"><table><thead><tr>
+        <th title="Marque a turma inteira">Turma</th>
+        ${all.map(n=>`<th><label style="display:flex;align-items:center;justify-content:center;gap:3px;flex-direction:column;cursor:pointer">
+          ${n}<input type="checkbox" data-excluir-col="${n}" title="Marcar todos os planos da semana ${n}"></label></th>`).join('')}
+      </tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="hint">Coluna = a semana em todas as turmas; linha = todos os planos da turma. Você também pode selecionar tudo ou desmarcar tudo. Somente os planos existentes são selecionáveis.</p>`;
+    const realChecks=()=>$('[data-excluir-week]',root);
+    function updateDeleteSelection(){
+      const items=realChecks();
+      for(const col of $('[data-excluir-col]',root)){
+        const matched=items.filter(x=>x.dataset.excluirWeek===col.dataset.excluirCol);
+        const marked=matched.filter(x=>x.checked).length;
+        col.checked=matched.length>0 && marked===matched.length;
+        col.indeterminate=marked>0 && marked<matched.length;
+        col.disabled=!matched.length;
+      }
+      for(const row of $('[data-excluir-row]',root)){
+        const matched=items.filter(x=>x.dataset.excluirClass===row.dataset.excluirRow);
+        const marked=matched.filter(x=>x.checked).length;
+        row.checked=matched.length>0 && marked===matched.length;
+        row.indeterminate=marked>0 && marked<matched.length;
+        row.disabled=!matched.length;
+      }
+      const count=items.filter(x=>x.checked).length;
+      const label=$('#seges-v3-del-count',root);
+      if(label)label.textContent=count+' plano(s) selecionado(s)';
+      const apply=$('#seges-v3-del-apply',root);
+      if(apply)apply.disabled=count===0;
+    }
+    $('#seges-v3-del-table',root).onchange=event=>{
+      const col=event.target.closest('[data-excluir-col]');
+      const row=event.target.closest('[data-excluir-row]');
+      if(col)realChecks().filter(x=>x.dataset.excluirWeek===col.dataset.excluirCol)
+        .forEach(x=>{x.checked=col.checked;});
+      else if(row)realChecks().filter(x=>x.dataset.excluirClass===row.dataset.excluirRow)
+        .forEach(x=>{x.checked=row.checked;});
+      updateDeleteSelection();
+    };
+    $('#seges-v3-del-all',root).onclick=()=>{realChecks().forEach(x=>{x.checked=true;});updateDeleteSelection();};
+    $('#seges-v3-del-none',root).onclick=()=>{realChecks().forEach(x=>{x.checked=false;});updateDeleteSelection();};
     const btn=$('#seges-v3-del-apply');
-    btn.disabled=!all.length;
     btn.classList.add('danger');
+    updateDeleteSelection();
     encerrarOperacao();
     btn.onclick=async()=>{
       const checked=$$('[data-excluir-week]:checked',root);
