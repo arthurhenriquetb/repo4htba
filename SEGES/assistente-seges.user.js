@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.3.0
+// @version      3.3.1
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -1881,8 +1881,23 @@ function iniciarModuloPlanos() {
   let ativo = false, cancelado = false, controller = null, quadro = null, quadroAtual = null;
   let linhasLog = [], progresso = {atual:0,total:0}, ultimoRelatorio = null;
   let iframe = null, operacaoAtual = null;
-  const $ = (sel, root=document) => root.querySelector(sel);
-  const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+  // Um Shadow DOM isolado impede o CSS do próprio SEGES de reduzir ou esconder
+  // a janela de revisão. Consultas globais priorizam os controles dessa janela.
+  let areaTrabalhoHost = null, areaTrabalhoShadow = null;
+  const $ = (sel, root=document) => {
+    if(root===document && areaTrabalhoShadow){
+      const el=areaTrabalhoShadow.querySelector(sel);
+      if(el)return el;
+    }
+    return root.querySelector(sel);
+  };
+  const $$ = (sel, root=document) => {
+    if(root===document && areaTrabalhoShadow){
+      const nodes=Array.from(areaTrabalhoShadow.querySelectorAll(sel));
+      if(nodes.length)return nodes;
+    }
+    return Array.from(root.querySelectorAll(sel));
+  };
   const dormir = ms => new Promise(resolve => setTimeout(resolve,ms));
   const html = v => String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const normal = v => String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
@@ -2024,7 +2039,7 @@ function iniciarModuloPlanos() {
     const el=document.createElement('div');
     el.id='seges-v3-panel';
     el.dataset.segesVersion='3.3.0';
-    el.innerHTML=`<div class="head">SEGES • Assistente v3.3.0 — Planos</div><div class="body">
+    el.innerHTML=`<div class="head">SEGES • Assistente v3.3.1 — Planos</div><div class="body">
       <div id="seges-v3-status" style="margin-bottom:8px">Pronto. Nada será retomado depois que a guia for fechada.</div>
       <div style="height:9px;background:#e1eaf2;border-radius:8px;overflow:hidden"><div id="seges-v3-progress" style="height:100%;width:0;background:#1578b3"></div></div>
       <div id="seges-v3-percentage" style="font-size:11px;text-align:right">0%</div>
@@ -2061,40 +2076,105 @@ function iniciarModuloPlanos() {
       cancelado=true;controller?.abort();if(iframe)iframe.src='about:blank';
     },{once:true});
   }
-  function modal(content) {
-    // Usar o mesmo painel em duas formas: launcher pequeno e janela grande.
-    // Assim, a revisão nunca aparece atrás do painel ou da camada do SEGES.
-    const panel=$('#seges-v3-panel');
-    if(!panel)throw Error('Painel do assistente não encontrado. Recarregue o SEGES.');
-    $('#seges-v3-overlay')?.remove();
-    panel.setAttribute('data-seges-view','workspace');
-    panel.style.setProperty('visibility','visible','important');
-    const el=document.createElement('section');
-    el.id='seges-v3-overlay';
-    el.setAttribute('role','dialog');
-    el.setAttribute('aria-modal','true');
-    el.innerHTML='<div class="seges-v3-dialog" role="document">'+
-      '<div id="seges-v3-modal-progress" style="font-size:12px;padding:7px 0 11px;margin-bottom:10px;border-bottom:1px solid #dce5ef">'+
-      '<div id="seges-v3-modal-status" style="white-space:normal;overflow-wrap:anywhere">Preparando...</div>'+
-      '<div style="margin-top:6px;height:6px;background:#e4edf3;border-radius:6px;overflow:hidden">'+
-      '<div id="seges-v3-modal-progress-fill" style="height:100%;width:0;background:#166fa5"></div>'+
-      '</div></div>'+content+'</div>';
-    // O workspace agora está DENTRO da janela principal (sem outro overlay).
-    panel.appendChild(el);
-    quadro=el;
-    const lastStatus=$('#seges-v3-status',panel)?.textContent;
-    if(lastStatus)$('#seges-v3-modal-status',el).textContent=lastStatus;
-    atualizarProgresso();
-    return el;
-  }
   function fecharModal() {
-    quadro?.remove();
+    if(areaTrabalhoHost)areaTrabalhoHost.remove();
+    areaTrabalhoHost=null;
+    areaTrabalhoShadow=null;
     quadro=null;
-    const panel=$('#seges-v3-panel');
-    if(panel){
-      panel.removeAttribute('data-seges-view');
-      panel.style.removeProperty('visibility');
-    }
+    const panel=document.querySelector('#seges-v3-panel');
+    if(panel)panel.style.removeProperty('display');
+  }
+  function modal(content) {
+    // Não ampliar o painel pequeno: abrir uma área própria, isolada do CSS do SEGES.
+    // A interface inteira fica no Shadow DOM e nunca herda regras de layout externas.
+    fecharModal();
+    const panel=document.querySelector('#seges-v3-panel');
+    if(!panel)throw Error('Painel do assistente ausente. Recarregue a página do SEGES.');
+    const host=document.createElement('div');
+    host.id='seges-v331-workspace-host';
+    const fixed={
+      all:'initial',position:'fixed',top:'0',left:'0',right:'0',bottom:'0',
+      width:'100vw',height:'100vh',margin:'0',padding:'0',
+      display:'block',visibility:'visible',opacity:'1',
+      'box-sizing':'border-box',overflow:'hidden','z-index':'2147483647'
+    };
+    for(const [property,value] of Object.entries(fixed))
+      host.style.setProperty(property,value,'important');
+    const shadow=host.attachShadow({mode:'open'});
+    shadow.innerHTML=`<style>
+      :host {all:initial!important;position:fixed!important;inset:0!important;
+        display:block!important;width:100vw!important;height:100vh!important;
+        max-width:none!important;max-height:none!important;z-index:2147483647!important;
+        visibility:visible!important;opacity:1!important;overflow:hidden!important}
+      *,*::before,*::after{box-sizing:border-box}
+      #seges-v3-overlay{position:absolute;inset:0;display:flex;align-items:stretch;
+        justify-content:center;padding:12px;width:100%;height:100%;overflow:auto;
+        background:#eef2f8;font:13px/1.45 Arial,sans-serif;color:#283d52}
+      #seges-v3-overlay .seges-v3-dialog{position:relative;display:block;
+        width:100%;max-width:1220px;min-width:0;min-height:0;
+        height:fit-content;max-height:none;padding:18px;margin:0 auto;
+        background:#fff;border-radius:12px;border:1px solid #d7e1eb;
+        box-shadow:0 8px 35px #1b2e4a2b;color:#283d52;overflow:visible}
+      #seges-v3-overlay h3{font-size:18px;line-height:1.3;margin:0 0 12px}
+      #seges-v3-overlay p{margin:8px 0}
+      #seges-v3-overlay .hint{font-size:12px;color:#576a7d;line-height:1.5}
+      #seges-v3-overlay .actions{display:flex;gap:8px;justify-content:flex-end;
+        flex-wrap:wrap;margin-top:14px}
+      #seges-v3-overlay button{cursor:pointer;border:1px solid #d1dce8;
+        border-radius:7px;background:#e7eff6;color:#20425e;
+        padding:8px 12px;font:inherit;min-height:32px}
+      #seges-v3-overlay button.primary{background:#17699e;color:white;border-color:#17699e}
+      #seges-v3-overlay button.danger{background:#be3e43;color:white;border-color:#be3e43}
+      #seges-v3-overlay button:disabled{opacity:.5;cursor:not-allowed}
+      #seges-v3-overlay .scroll{width:100%;max-height:55vh;overflow:auto;
+        border:1px solid #dce5ec;border-radius:8px}
+      #seges-v3-overlay table{width:100%;border-collapse:separate;
+        border-spacing:0;font:12px/1.4 Arial,sans-serif}
+      #seges-v3-overlay th,#seges-v3-overlay td{padding:7px;border-bottom:1px solid #e3eaf0;
+        text-align:center;white-space:nowrap}
+      #seges-v3-overlay th{background:#f1f5f9;position:sticky;top:0;z-index:2}
+      #seges-v3-overlay td:first-child,#seges-v3-overlay th:first-child{
+        position:sticky;left:0;z-index:3;background:#fff;text-align:left}
+      #seges-v3-overlay th:first-child{z-index:4;background:#f1f5f9}
+      #seges-v3-overlay input,#seges-v3-overlay select,#seges-v3-overlay textarea{
+        color:#283d52;background:#fff;font:inherit;border:1px solid #c5d4e0;
+        border-radius:6px;padding:6px;max-width:100%}
+      #seges-v3-overlay input[type=checkbox]{width:16px;height:16px;
+        padding:0;accent-color:#156da1}
+      #seges-v3-overlay label{cursor:pointer}
+      #seges-v3-overlay strong{font-weight:700}
+      @media(max-width:700px){#seges-v3-overlay{padding:5px}
+        #seges-v3-overlay .seges-v3-dialog{padding:11px;border-radius:4px}
+        #seges-v3-overlay h3{font-size:16px}}
+    </style>
+    <section id="seges-v3-overlay" role="dialog" aria-modal="true"
+      aria-label="SEGES Assistente — Área de trabalho">
+      <div class="seges-v3-dialog" role="document">
+        <div id="seges-v3-modal-progress" style="padding:6px 0 10px;margin-bottom:11px;
+          border-bottom:1px solid #dce5ef;font-size:12px">
+          <div id="seges-v3-modal-status" style="overflow-wrap:anywhere">Preparando...</div>
+          <div style="margin-top:6px;height:7px;background:#e4edf3;
+            border-radius:7px;overflow:hidden">
+            <div id="seges-v3-modal-progress-fill" style="height:100%;width:0;
+              background:#17699e"></div>
+          </div>
+        </div>
+        ${content}
+      </div>
+    </section>`;
+    document.documentElement.appendChild(host);
+    areaTrabalhoHost=host;
+    areaTrabalhoShadow=shadow;
+    quadro=host;
+    // Ocultar APENAS o launcher antigo, depois que a tela grande já existe.
+    panel.style.setProperty('display','none','important');
+    const lastStatus=document.querySelector('#seges-v3-status')?.textContent;
+    const statusEl=shadow.querySelector('#seges-v3-modal-status');
+    if(lastStatus&&statusEl)statusEl.textContent=lastStatus;
+    atualizarProgresso();
+    const container=shadow.querySelector('#seges-v3-overlay');
+    if(!container)throw Error('A área de trabalho não pôde ser criada.');
+    return container;
   }
   function baixar(name,content) {
     const blob=new Blob([content],{type:'text/plain;charset=utf-8'});
@@ -2110,7 +2190,7 @@ function iniciarModuloPlanos() {
       .map(line=>line.replace(/(https?:\/\/[^\s?#)]+)\?[^\s)]+/g,'$1?[parâmetros ocultos]'))
       .join('\n');
     return [
-      'SEGES • Assistente 3.3.0',
+      'SEGES • Assistente 3.3.1',
       'Etapa: '+String(etapa||'Não identificada'),
       'Plano: '+String(contexto||'Não identificado'),
       'Erro: '+message,
