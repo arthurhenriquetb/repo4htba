@@ -2241,7 +2241,7 @@ function iniciarModuloPlanos() {
     }).map(opt=>({...opt,manualOnly:!classificarHabilidade(opt.label)}));
   }
   function lerAulas(doc,turma,week) {
-    const rows=$('#weekly_plan tr.by-curriculum-discipline',doc);
+    const rows=$$('#weekly_plan tr.by-curriculum-discipline',doc);
     if(!rows.length){
       // Semana sem aulas (feriado, conselho, encerramento do trimestre etc.).
       // Somente considerar ausência legítima em um formulário do SEGES ou numa
@@ -2263,7 +2263,7 @@ function iniciarModuloPlanos() {
       const existingSkill=String(sel?.value||'').trim();
       const profile=PERFIS.find(item=>item.regex.test(discipline));
       const kind=profile?'manual':CIENCIAS.test(discipline)?'science':'other';
-      const selections=(selector)=>$(selector,tr).flatMap(el=>Array.from(el.selectedOptions||[])
+      const selections=(selector)=>$$(selector,tr).flatMap(el=>Array.from(el.selectedOptions||[])
         .filter(opt=>opt.value).map(opt=>String(opt.value)));
       const hasKnowledge=selections('.structured-weekly-plan-knowledges-select').length>0;
       const hasMethod=selections('.structured-weekly-plan-methodologies-select').length>0;
@@ -2540,12 +2540,12 @@ function iniciarModuloPlanos() {
 }
 
   function alertaDoSeges(doc) {
-  return $('.alert-danger, .alert.alert-error, #error_explanation, .invalid-feedback',doc)
+  return $$('.alert-danger, .alert.alert-error, #error_explanation, .invalid-feedback',doc)
     .map(el=>String(el.textContent||'').trim()).filter(Boolean).join(' | ').slice(0,1200);
 }
 
   function verificarAulasNaoMudaram(group,doc) {
-  const rows=$('#weekly_plan tr.by-curriculum-discipline',doc);
+  const rows=$$('#weekly_plan tr.by-curriculum-discipline',doc);
   if(!rows.length)throw Error('O formulário mudou ou perdeu as aulas antes do salvamento. Nenhuma gravação será feita.');
   for(const action of group.items){
     const original=action.row,actual=rows[original.index];
@@ -2643,7 +2643,7 @@ function iniciarModuloPlanos() {
 
   async function aplicarAulaNoFrame(group,action,doc) {
   verificarAtivo();
-  const tr=$('#weekly_plan tr.by-curriculum-discipline',doc)[action.row.index];
+  const tr=$$('#weekly_plan tr.by-curriculum-discipline',doc)[action.row.index];
   if(action.manual){
     const field=$('textarea',tr);
     if(!field)throw Error('Campo de texto ausente: aula '+(action.row.index+1));
@@ -2655,7 +2655,7 @@ function iniciarModuloPlanos() {
     return;
   }
   const before=action.row.existingSkill||'';
-  let block=$('.structured-weekly-plan-id-select',tr)
+  let block=$$('.structured-weekly-plan-id-select',tr)
     .map(el=>el.closest('.nested-fields')||el.parentElement)
     .find(el=>{
       const value=String($('.structured-weekly-plan-id-select',el)?.value||'');
@@ -2665,10 +2665,10 @@ function iniciarModuloPlanos() {
   if(!block){
     const add=$('.add_fields',tr);
     if(!add)throw Error('O SEGES não oferece botão para incluir habilidade nesta aula.');
-    const previous=$('.structured-weekly-plan-id-select',tr).length;
+    const previous=$$('.structured-weekly-plan-id-select',tr).length;
     add.click();
     block=await esperarElemento(()=>{
-      const all=$('.structured-weekly-plan-id-select',tr);
+      const all=$$('.structured-weekly-plan-id-select',tr);
       if(all.length<=previous)return null;
       return all.at(-1).closest('.nested-fields')||all.at(-1).parentElement;
     },5000);
@@ -2769,20 +2769,20 @@ function iniciarModuloPlanos() {
   log('Salvo e verificado: '+group.cls.name+' · semana '+group.week.week);
 }
   function identificarExcluir(doc) {
-  const forms=$('form',doc);
+  const forms=$$('form',doc);
   for(const form of forms){
     const override=String($('input[name="_method"]',form)?.value||'').toLowerCase();
     const method=String(form.getAttribute('method')||'GET').toUpperCase();
     if(override!=='delete'&&method!=='DELETE')continue;
     const url=urlSeges(form.getAttribute('action')||'');
     if(!url||!/^\/weekly_plans\/\d+\/?$/.test(url.pathname))continue;
-    const fields=$('input[name]',form)
+    const fields=$$('input[name]',form)
       .filter(input=>!input.disabled && (!['checkbox','radio'].includes(input.type)||input.checked))
       .map(input=>[input.name,input.value]);
     return {url:url.href,method:method==='DELETE'?'DELETE':'POST',fields,
       csrf:$('meta[name="csrf-token"]',doc)?.content||''};
   }
-  for(const link of $('a[data-method],a[data-turbo-method],button[data-method]',doc)){
+  for(const link of $$('a[data-method],a[data-turbo-method],button[data-method]',doc)){
     if(String(link.dataset.method||link.getAttribute('data-turbo-method')||'').toLowerCase()!=='delete')continue;
     const url=urlSeges(link.getAttribute('href')||link.getAttribute('formaction')||'');
     if(!url||!/^\/weekly_plans\/\d+\/?$/.test(url.pathname))continue;
@@ -2871,7 +2871,7 @@ function iniciarModuloPlanos() {
     btn.classList.add('danger');
     encerrarOperacao();
     btn.onclick=async()=>{
-      const checked=$('[data-excluir-week]:checked',root);
+      const checked=$$('[data-excluir-week]:checked',root);
       if(!checked.length){alert('Marque pelo menos um plano.');return;}
       const selected=checked.map(el=>{
         const c=map.get(el.dataset.excluirClass);
