@@ -2203,7 +2203,8 @@ function iniciarModuloPlanos() {
   }
   function opcoesDoBloco(root) {
     return $$('.structured-weekly-plan-id-select option',root)
-      .filter(opt=>String(opt.value).trim()).map(opt=>({
+      .filter(opt=>String(opt.value).trim() && !/^(?:sem habilidade|nenhuma habilidade|selecione|escolha uma habilidade|--|-)$/
+        .test(normal(opt.textContent))).map(opt=>({
         value:String(opt.value),label:String(opt.textContent||'').trim(),
         knowledges:arrayDados(opt.getAttribute('data-knowledges')||opt.dataset.knowledges),
         methodologies:arrayDados(opt.getAttribute('data-methodologies')||opt.dataset.methodologies)
@@ -2389,17 +2390,43 @@ function iniciarModuloPlanos() {
     }catch(error){falhar(error);}
     finally {encerrarOperacao();}
   }
+  function etapaCompativel(cls,options) {
+  const known=String(cls?.stage||etapaNome(cls?.name)||'').trim();
+  if(known)return known;
+  const grades=new Set((options||[]).map(option=>classificarHabilidade(option.label)).filter(Boolean));
+  return grades.size===1?[...grades][0]:'';
+}
+
   function sugerirHabilidade(history,options,stage) {
-    const valid=validasParaTurma(options,stage).filter(opt=>!opt.manualOnly);
-    if(!stage||!valid.length)return '';
-    const recent=history.slice(0,5);
-    const last=recent.find(x=>x.skill)?.skill||'';
-    if(!last)return valid[0].value;
-    const index=valid.findIndex(opt=>opt.value===last);
-    if(index<0)return ''; // Nunca voltar ao início quando a habilidade sumiu da lista
-    const count=recent.filter(x=>x.skill===last).length;
-    return valid[Math.min(index+(count>=3?1:0),valid.length-1)].value;
+  const valid=validasParaTurma(options,stage);
+  if(!valid.length)return '';
+  // Mesmo sem código EF/EM legível, sugerir a partir do dropdown e sinalizar
+  // a incerteza na revisão, em vez de deixar todos os campos vazios.
+  const safe=valid.some(opt=>!opt.manualOnly)?valid.filter(opt=>!opt.manualOnly):valid;
+  if(!safe.length)return '';
+  const recent=(history||[]).slice(0,5);
+  const last=recent.map(entry=>entry.skill).find(Boolean);
+  if(!last)return safe[0].value;
+  const position=safe.findIndex(option=>mesmaHabilidade(option,last)||
+    (String(option.value)===String(last.value)));
+  const repetition=recent.filter(entry=>entry.skill&&mesmaHabilidade(entry.skill,last)).length;
+  if(position>=0)return safe[Math.min(position+(repetition>=3?1:0),safe.length-1)].value;
+  // Se o histórico usou outra lista, encontrar o ponto correspondente por
+  // código curricular. Nunca retroceder ao início após a última habilidade.
+  const priorCode=codigoHabilidade(last.label);
+  if(priorCode){
+    const indices=safe.map((option,index)=>({index,code:codigoHabilidade(option.label)}))
+      .filter(item=>item.code);
+    if(indices.length){
+      const after=indices.find(item=>item.code>priorCode);
+      if(after)return safe[after.index].value;
+      return safe[indices[indices.length-1].index].value;
+    }
   }
+  // Sem correspondência semântica, manter a sugestão na última opção,
+  // para não reiniciar indevidamente a sequência.
+  return safe[safe.length-1].value;
+}
   function gerarPropostas() {
     const selected=quadroAtual.selected||[];
     const suggested=[],warnings=[...(quadroAtual.historyWarnings||[])];
