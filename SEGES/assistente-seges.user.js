@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.2.1
+// @version      3.2.2
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -3228,17 +3228,17 @@ function iniciarModuloPlanos() {
           ${n}<input type="checkbox" data-excluir-col="${n}" title="Marcar todos os planos da semana ${n}"></label></th>`).join('')}
       </tr></thead><tbody>${rows}</tbody></table></div>
       <p class="hint">Coluna = a semana em todas as turmas; linha = todos os planos da turma. Você também pode selecionar tudo ou desmarcar tudo. Somente os planos existentes são selecionáveis.</p>`;
-    const realChecks=()=>$('[data-excluir-week]',root);
+    const realChecks=()=>$$('[data-excluir-week]',root);
     function updateDeleteSelection(){
       const items=realChecks();
-      for(const col of $('[data-excluir-col]',root)){
+      for(const col of $$('[data-excluir-col]',root)){
         const matched=items.filter(x=>x.dataset.excluirWeek===col.dataset.excluirCol);
         const marked=matched.filter(x=>x.checked).length;
         col.checked=matched.length>0 && marked===matched.length;
         col.indeterminate=marked>0 && marked<matched.length;
         col.disabled=!matched.length;
       }
-      for(const row of $('[data-excluir-row]',root)){
+      for(const row of $$('[data-excluir-row]',root)){
         const matched=items.filter(x=>x.dataset.excluirClass===row.dataset.excluirRow);
         const marked=matched.filter(x=>x.checked).length;
         row.checked=matched.length>0 && marked===matched.length;
