@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.0.0**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.0.1**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -41,6 +41,12 @@ A sequência funciona assim:
 - Sem histórico ou com etapa desconhecida: mostrar alternativas; se a etapa for reconhecida, pode sugerir a primeira opção compatível, sempre sujeita à aprovação.
 
 O filtro curricular usa os códigos EF/EM das habilidades quando estão disponíveis. Se a etapa não puder ser determinada, a seleção é manual. O script não insere opções inventadas para forçar o formulário.
+
+### Semanas sem aulas
+
+Feriados, conselhos de classe, encerramentos de período e outras semanas em que não há aulas são **ignorados automaticamente**, sem preenchimento nem salvamento. O painel registra a semana ignorada e a revisão mostra um aviso, mas o programa segue com as demais semanas selecionadas.
+
+**Proteção:** se o SEGES retornar uma página de login, erro ou um formulário não reconhecido, não será tratado como uma semana vazia: a execução interrompe para evitar preenchimento na página errada.
 
 ### Sem progresso persistente
 
@@ -83,6 +89,8 @@ As versões independentes e anteriores estão guardadas em [SEGES/arquivo](SEGES
 ## Testes e limitações
 
 - A **sintaxe JavaScript** foi verificada.
+- Foram testados cenários simulados de semana sem aulas, aviso explícito de ausência de aulas e páginas inválidas; os dois primeiros são ignorados e as páginas inválidas provocam erro seguro.
+- Foram corrigidas as consultas de múltiplas aulas e campos do formulário, para evitar que o script interpretasse uma aula isolada como a lista inteira.
 - A seleção automática de **2 ou 4 semanas após a última planejada**, a filtragem de habilidades por ano escolar e a progressão de habilidades foram testadas com **dados simulados**.
 - **Não foi possível testar o carregamento e o salvamento reais com a sessão autenticada do SEGES**. Em especial, o formulário interno depende de o site permitir a abertura de páginas dentro da mesma guia. Se isso for bloqueado, o programa deverá parar em vez de contornar essa restrição.
 - Comece testando **uma turma e uma semana**, confira as sugestões e o registro salvo no SEGES antes de executar lotes maiores.
