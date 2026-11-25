@@ -1968,7 +1968,7 @@ function iniciarModuloPlanos() {
     estilos();
     if($('#seges-v3-panel'))return;
     const el=document.createElement('div');el.id='seges-v3-panel';
-    el.innerHTML=`<div class="head">SEGES • Assistente — Planos</div><div class="body">
+    el.innerHTML=`<div class="head">SEGES • Assistente v3.2.5 — Planos</div><div class="body">
       <div id="seges-v3-status" style="margin-bottom:8px">Pronto. Nada será retomado depois que a guia for fechada.</div>
       <div style="height:9px;background:#e1eaf2;border-radius:8px;overflow:hidden"><div id="seges-v3-progress" style="height:100%;width:0;background:#1578b3"></div></div>
       <div id="seges-v3-percentage" style="font-size:11px;text-align:right">0%</div>
