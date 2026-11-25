@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.4**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.2.5**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -81,6 +81,8 @@ O botão **Parar** cancela as operações pendentes. Depois de uma interrupção
 **Importante:** registros que o SEGES já recebeu podem permanecer salvos mesmo após fechar a guia ou interromper uma operação. Confira-os diretamente no SEGES antes de executar novamente.
 
 ### Excluir planos de várias turmas
+
+**Diagnóstico v3.2.5:** o erro JavaScript `Cannot read properties of null (reading 'filter')` ainda não teve origem reproduzida na rotina de exclusão da versão publicada. O programa agora mostra claramente a versão no painel e inclui a **localização técnica (stack trace)** na opção **Copiar diagnóstico**, tanto em erros de carregamento quanto em falhas durante a exclusão. Parâmetros das URLs são ocultados nesse diagnóstico. A correção do comando Rails da versão 3.2.4 permanece. Confira se a versão indicada no topo do painel é realmente **3.2.5** e mantenha apenas uma versão do userscript ativa. Não repita exclusões cujo resultado não foi verificado no SEGES.
 
 **Correção v3.2.4 (HTTP 404 na exclusão):** a aplicação de alguns comandos com `data-method="delete"` estava enviando um `DELETE` HTTP direto. Em Rails UJS, esse link é acionado como formulário `POST` com `_method=delete`. O assistente agora respeita essa distinção, mantém comandos `data-turbo-method="delete"` com `DELETE`, e não força o cabeçalho de XMLHttpRequest em formulários HTML. O diagnóstico também registra o método usado, sem divulgar tokens. **Não há tentativa automática com métodos alternativos** após um erro. A alteração passou em testes simulados, mas ainda precisa de validação na sessão autenticada do SEGES. Teste primeiro apenas um plano.
 
