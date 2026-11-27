@@ -1955,23 +1955,25 @@
                         )
                 );
     
-            // Só datas que aparecem como pendentes/warning.
-            let datas =
-                [
-                    ...tabela.querySelectorAll(
-                        'thead a.cell-warning'
-                    )
-                ].filter(visivel);
+            // Inspecionar todas as aulas/datas, inclusive já concluídas.
+            let datas=[...tabela.querySelectorAll('thead a')]
+              .filter(visivel)
+              .filter(link=>{
+                const label=String(link.textContent||'').trim();
+                const classes=String(link.className||'');
+                return /^\d{1,2}(?:\/\d{1,2}(?:\/\d{4})?)?$/.test(label)||
+                  /(?:^|\s)cell-[\w-]+/.test(classes);
+              });
     
             // -----------------------------------------------------
-            // Se não houver cell-warning, não força datas
-            // aleatórias.
+            // Somente cabeçalhos do calendário; outros links do SEGES
+            // não são tratados como aulas.
             // -----------------------------------------------------
     
             if (!datas.length) {
     
                 atualizarStatus(
-                    'Nenhuma data pendente encontrada.'
+                    'Nenhuma data de aula encontrada para conferência.'
                 );
     
                 return;
