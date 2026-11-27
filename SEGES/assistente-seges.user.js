@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.5.1
+// @version      3.5.2
 // @description  Faltas, planejamento e notas Excel no SEGES, com revisão antes de lançar.
 // @author       Prof. Arthur
 // @contributor  Prof. Samuel Louzada (módulo de notas, versão 2.7)
@@ -41,7 +41,7 @@
     {key:'CONCEITUAL',synonyms:['CONCEITUAL','PROVA'],excel:[1,2]},
     {key:'PROCEDIMENTAL',synonyms:['TRABALHOS','PROCEDIMENTAL','TRABALHOS INDIVIDUAIS','SEMINÁRIOS','PORTIFOLIOS','PORTFÓLIOS'],excel:[5,6]},
     {key:'ATITUDINAL',synonyms:['ATITUDINAL','OUTROS'],excel:[9,10]},
-    {key:'INTERDISCIPLINAR',synonyms:['INTERDISCIPLINAR','DIVERSIFICADA','TRABALHOS EM GRUPO'],excel:[13,14]}
+    {key:'INTERDISCIPLINAR',synonyms:['INTERDISCIPLINAR','DIVERSIFICADA','TRABALHOS EM GRUPO','LISTAS DE EXERCICIOS','LISTA DE EXERCICIOS'],excel:[13,14]}
   ];
   const normalize=value=>String(value??'').normalize('NFD')
     .replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase();
@@ -2310,7 +2310,7 @@ function iniciarModuloPlanos() {
     const el=document.createElement('div');
     el.id='seges-v3-panel';
     el.dataset.segesVersion='3.3.0';
-    el.innerHTML=`<div class="head">SEGES • Assistente v3.5.1 — Planos</div><div class="body">
+    el.innerHTML=`<div class="head">SEGES • Assistente v3.5.2 — Planos</div><div class="body">
       <div id="seges-v3-status" style="margin-bottom:8px">Pronto. Nada será retomado depois que a guia for fechada.</div>
       <div style="height:9px;background:#e1eaf2;border-radius:8px;overflow:hidden"><div id="seges-v3-progress" style="height:100%;width:0;background:#1578b3"></div></div>
       <div id="seges-v3-percentage" style="font-size:11px;text-align:right">0%</div>
@@ -2461,7 +2461,7 @@ function iniciarModuloPlanos() {
       .map(line=>line.replace(/(https?:\/\/[^\s?#)]+)\?[^\s)]+/g,'$1?[parâmetros ocultos]'))
       .join('\n');
     return [
-      'SEGES • Assistente 3.5.1',
+      'SEGES • Assistente 3.5.2',
       'Etapa: '+String(etapa||'Não identificada'),
       'Plano: '+String(contexto||'Não identificado'),
       'Erro: '+message,
