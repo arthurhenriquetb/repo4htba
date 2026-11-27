@@ -50,6 +50,20 @@
   const host=document.createElement('div');
   host.id='seges-grades-assistant';
   host.style.setProperty('all','initial','important');
+  // O 'all:initial' inline prevalece sobre estilos dentro do Shadow DOM;
+  // portanto a geometria também deve ser definida inline como !important.
+  function layoutHost(open){
+    const properties={
+      position:'fixed',top:open?'0':'12px',right:open?'0':'12px',
+      left:open?'0':'auto',bottom:open?'0':'auto',
+      width:open?'100vw':'auto',height:open?'100vh':'auto',
+      display:'block',visibility:'visible',opacity:'1',
+      overflow:open?'hidden':'visible','z-index':'2147483647'
+    };
+    for(const [name,value] of Object.entries(properties))
+      host.style.setProperty(name,value,'important');
+  }
+  layoutHost(false);
   const shadow=host.attachShadow({mode:'open'});
   shadow.innerHTML=`
     <style>
@@ -128,6 +142,7 @@
   function status(text){$('#status').textContent=String(text)}
   function displayWorkspace(open){
     if(busy)return;
+    layoutHost(!!open);
     host.setAttribute('data-open',String(!!open));
     $('#launcher').hidden=!!open;
     $('#workspace').hidden=!open;
