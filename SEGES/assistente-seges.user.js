@@ -413,7 +413,10 @@
  const empty=matched.filter(tr=>{
   const text=String(tr.querySelector('textarea')?.value||'').trim();
   const ability=[...tr.querySelectorAll('.structured-weekly-plan-id-select')]
-    .some(sel=>String(sel.value||'').trim()&&[...(sel.options||[])].some(o=>String(o.value)===String(sel.value)));
+    .some(sel=>String(sel.value||'').trim()&&[...(sel.options||[])].some(o=>
+      String(o.value)===String(sel.value)&&
+      !/^(?:sem habilidade|nenhuma habilidade|selecione|escolha uma habilidade)/.test(
+        normalizarAula(o.textContent||''))));
   return !text&&!ability;
  }).length;
  if(empty===matched.length)return {status:'missing',reason:empty+' aula(s) sem habilidade e sem texto no plano semanal'};
