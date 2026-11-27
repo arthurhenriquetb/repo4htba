@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.3.2**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.4.0**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -12,6 +12,36 @@
 4. Substitua o código anterior pelo código copiado e salve com **Ctrl + S**.
 5. **Desative todas as versões antigas/duplicadas** de scripts do SEGES.
 6. Recarregue a página do SEGES.
+
+## Notas: Excel → SEGES (v3.4.0)
+
+O módulo de **Notas** foi integrado ao mesmo arquivo do Violentmonkey. Ele é aberto apenas nas páginas de uma turma em `/grades?classroom_id=...`. O código-base do lançamento de notas foi enviado pelo usuário e é atribuído ao **Prof. Samuel Louzada (SEGES Autofill v2.7)**.
+
+### Como usar
+
+1. Abra **Notas** no SEGES e escolha a turma. Na página da turma, clique no lançador **SEGES • Notas → Importar Excel**.
+2. Escolha um arquivo `.xlsx`; a primeira aba será lida pela biblioteca SheetJS v0.18.5 (a mesma dependência do script de origem, carregada pelo Violentmonkey).
+3. Clique em **Conferir CONCEITUAL**, **PROCEDIMENTAL**, **ATITUDINAL** ou **INTERDISCIPLINAR**. As categorias podem ser tratadas separadamente, como no script original.
+4. Confira a prévia, os estudantes localizados por nome, as notas arredondadas, as substituições e os avisos de ausências/duplicações.
+5. Clique em **Aplicar notas conferidas** e confirme. O script altera os campos do SEGES e dispara os eventos de edição do formulário. **O SEGES pode salvar automaticamente; confira sempre o resultado no próprio site.**
+
+| Categoria no assistente | Sinônimos reconhecidos no SEGES | Avaliação / Recuperação no Excel |
+| --- | --- | --- |
+| Conceitual | Conceitual, Prova | B / C |
+| Procedimental | Trabalhos, Procedimental, Trabalhos Individuais, Seminários, Portifolios/Portfólios | F / G |
+| Atitudinal | Atitudinal, Outros | J / K |
+| Interdisciplinar | Interdisciplinar, Diversificada, Trabalhos em Grupo | N / O |
+
+A comparação é feita pelo nome do estudante (sem diferenciar caixa, acentos e espaçamentos repetidos). Nomes repetidos na planilha ou no SEGES são ignorados para evitar preenchimento em pessoa errada. Alunos não encontrados e notas inválidas são sinalizados. O comportamento de **arredondar** continua igual ao script do Prof. Samuel.
+
+**Proteção acrescentada:** células vazias no Excel não apagam notas do SEGES. A edição de valores existentes exige visualização da prévia e confirmação; o script não procura botões de salvar do site. Se o usuário quiser apagar notas deliberadamente, isso deve ser feito no SEGES. Nenhum arquivo Excel nem progresso é guardado pelo userscript após recarregar a página.
+
+### Versões preservadas antes da integração
+
+- [3.3.2 estável — Faltas e Planos](SEGES/arquivo/assistente-seges-v3.3.2-estavel.user.js), cópia exata do código anterior confirmado pelo usuário
+- [3.3.3 pré-notas](SEGES/arquivo/assistente-seges-v3.3.3-pre-notas.user.js), cópia do estado do repositório antes da integração
+
+**Testes:** sintaxe de todo o código, montagem da interface isolada, carregamento simulado da primeira aba de Excel, prévia de notas, identificação de nomes, valores arredondados, preservação de células vazias e aplicação após confirmação. A automação ainda não foi testada em sessão autenticada do SEGES nem com a planilha real. Teste inicialmente **uma categoria e uma turma** e confira o resultado no SEGES antes de lançar notas em lote.
 
 ## Planos semanais: interface nova (v3)
 
