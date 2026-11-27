@@ -3435,7 +3435,11 @@ function iniciarModuloPlanos() {
   }
   async function aprovarEExecutar() {
   if(ativo)return;
-  const proposal=quadroAtual?.review?.suggested||[];
+  // Reconstruir a revisão com o texto que o usuário acabou de digitar.
+  // Digitar no textarea não recria a tabela (evita perder o foco a cada letra).
+  const refreshed=gerarPropostas();
+  quadroAtual.review=refreshed;
+  const proposal=refreshed.suggested;
   const actions=proposal.filter(item=>{
     const text=String(item.freeText||'').trim();
     if(item.manual)return item.value==='TEXT'&&!!text;
