@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.3.3
-// @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
+// @version      3.4.0
+// @description  Faltas, planejamento e notas Excel no SEGES, com revisão antes de lançar.
 // @author       Prof. Arthur
+// @contributor  Prof. Samuel Louzada (módulo de notas, versão 2.7)
 // @match        https://seges.sedu.es.gov.br/*
 // @run-at       document-idle
 // @grant        none
+// @require      https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js
 // ==/UserScript==
 
 
@@ -22,10 +24,297 @@
     iniciarModuloFaltas();
   } else if (/^\/weekly_plans(?:\/|$)/.test(path)) {
     iniciarModuloPlanos();
-  } else if (/^\/(?:grades|scores|marks)(?:\/|$)/.test(path)) {
-    // Espaço reservado: módulo de notas será implementado depois
-    // de identificarmos os campos reais dessa tela no SEGES.
+  } else if (/^\/grades(?:\/|$)/.test(path)) {
+    iniciarModuloNotas();
+  } else if (/^\/(?:scores|marks)(?:\/|$)/.test(path)) {
+    // Páginas não usadas pelo módulo Excel de notas.
   }
+
+  function iniciarModuloNotas() {
+  'use strict';
+  // Integrado do SEGES Autofill v2.7 — Prof. Samuel Louzada.
+  // Mantém categorias/sinônimos/colunas originais, com revisão antes de preencher.
+  if(window!==window.top||!new URLSearchParams(location.search).has('classroom_id'))return;
+  if(document.getElementById('seges-grades-assistant'))return;
+
+  const CATEGORIES=[
+    {key:'CONCEITUAL',synonyms:['CONCEITUAL','PROVA'],excel:[1,2]},
+    {key:'PROCEDIMENTAL',synonyms:['TRABALHOS','PROCEDIMENTAL','TRABALHOS INDIVIDUAIS','SEMINÁRIOS','PORTIFOLIOS','PORTFÓLIOS'],excel:[5,6]},
+    {key:'ATITUDINAL',synonyms:['ATITUDINAL','OUTROS'],excel:[9,10]},
+    {key:'INTERDISCIPLINAR',synonyms:['INTERDISCIPLINAR','DIVERSIFICADA','TRABALHOS EM GRUPO'],excel:[13,14]}
+  ];
+  const normalize=value=>String(value??'').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase();
+  const html=value=>String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const host=document.createElement('div');
+  host.id='seges-grades-assistant';
+  host.style.setProperty('all','initial','important');
+  const shadow=host.attachShadow({mode:'open'});
+  shadow.innerHTML=`
+    <style>
+      :host{all:initial!important;position:fixed!important;top:12px!important;right:12px!important;
+        z-index:2147483647!important;display:block!important;font:13px/1.4 Arial,sans-serif!important}
+      :host([data-open="true"]){top:0!important;right:0!important;bottom:0!important;left:0!important;
+        width:100vw!important;height:100vh!important;overflow:hidden!important}
+      *{box-sizing:border-box}
+      [hidden]{display:none!important}
+      button,input{font:inherit}
+      button{cursor:pointer;background:#e7eff6;color:#20425e;border:1px solid #c7d7e4;
+        border-radius:7px;padding:8px 11px}
+      button:disabled{opacity:.45;cursor:not-allowed}
+      .primary{background:#17699e!important;border-color:#17699e!important;color:#fff!important}
+      #launcher{display:flex;gap:10px;align-items:center;background:white;padding:11px;
+        color:#253e52;border:1px solid #bfcfdb;border-radius:10px;box-shadow:0 6px 22px #0003}
+      #workspace{display:flex;flex-direction:column;width:100%;height:100%;overflow:hidden;
+        background:#eef3f8;color:#263e50}
+      header{background:#135b8e;color:white;padding:10px 16px;display:flex;
+        justify-content:space-between;align-items:center}
+      header button{background:#fff}
+      main{width:min(1200px,100%);margin:auto;flex:1;min-height:0;overflow:auto;padding:14px}
+      section{background:white;padding:17px;border:1px solid #d7e4ed;border-radius:11px;margin-bottom:12px}
+      h2{font-size:18px;margin:0 0 8px}h3{font-size:16px;margin:0 0 8px}
+      .hint{color:#587084;font-size:12px;line-height:1.5}
+      .actions{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0}
+      .actions.end{justify-content:flex-end}
+      .status{padding:9px 0;border-top:1px solid #dde7ee;white-space:pre-wrap;overflow-wrap:anywhere}
+      .tablewrap{max-height:56vh;overflow:auto;border:1px solid #dbe5ed;border-radius:8px}
+      table{border-collapse:collapse;width:100%;font-size:12px}
+      th,td{border-bottom:1px solid #e1eaf1;padding:8px;text-align:left}
+      th{background:#f1f6fa;position:sticky;top:0}
+      .right{text-align:right;font-variant-numeric:tabular-nums}
+      .warn{color:#955c20;white-space:pre-wrap}
+      @media(max-width:700px){main{padding:5px}section{padding:10px}header{padding:7px}}
+    </style>
+    <div id="launcher"><strong>SEGES • Notas</strong><button id="open" class="primary">Importar Excel</button></div>
+    <div id="workspace" hidden>
+      <header><strong>SEGES • Assistente — Notas</strong><button id="close">Fechar</button></header>
+      <main>
+        <section>
+          <h2>Importar notas da planilha</h2>
+          <p class="hint">Módulo baseado no SEGES Autofill v2.7 (Prof. Samuel Louzada).
+            Confira se a turma aberta é a mesma da planilha.</p>
+          <p><label>Arquivo Excel (.xlsx): <input id="file" type="file" accept=".xlsx"></label></p>
+          <p id="filename" class="hint">Nenhum arquivo selecionado.</p>
+          <p class="hint">Primeira aba · Conceitual B/C · Procedimental F/G ·
+            Atitudinal J/K · Interdisciplinar N/O (avaliação / recuperação).</p>
+          <div id="categories" class="actions"></div>
+          <div id="status" class="status" role="status">Carregue um arquivo para começar.</div>
+        </section>
+        <section id="preview" hidden>
+          <h3 id="preview-title">Conferir notas</h3>
+          <p id="summary" class="hint"></p>
+          <div class="tablewrap"><table>
+            <thead><tr><th>Estudante</th><th class="right">Avaliação</th>
+              <th class="right">Recuperação</th><th>Alterações</th></tr></thead>
+            <tbody id="preview-body"></tbody>
+          </table></div>
+          <p id="warnings" class="warn hint"></p>
+          <p class="hint">As notas são arredondadas, como no script original.
+            Células vazias do Excel não apagam notas existentes.
+            O SEGES pode salvar automaticamente ao receber as alterações dos campos.</p>
+          <div class="actions end">
+            <button id="back">Voltar</button>
+            <button id="apply" class="primary">Aplicar notas conferidas</button>
+          </div>
+        </section>
+      </main>
+    </div>`;
+  document.documentElement.appendChild(host);
+  const $=sel=>shadow.querySelector(sel);
+  const $$=sel=>Array.from(shadow.querySelectorAll(sel));
+  let data=null,proposal=null,busy=false;
+
+  function status(text){$('#status').textContent=String(text)}
+  function displayWorkspace(open){
+    if(busy)return;
+    host.setAttribute('data-open',String(!!open));
+    $('#launcher').hidden=!!open;
+    $('#workspace').hidden=!open;
+  }
+  function normalizeGrade(raw){
+    if(raw==null||String(raw).trim()==='')return {status:'blank'};
+    const literal=typeof raw==='number'?raw:String(raw).replace(/\s/g,'').replace(',','.');
+    if(typeof literal==='string'&&!/^[+-]?\d+(?:\.\d+)?$/.test(literal))return {status:'invalid'};
+    const numeric=Number(literal);
+    return Number.isFinite(numeric)?{status:'valid',value:Math.round(numeric)}:{status:'invalid'};
+  }
+  function findGroup(category){
+    for(const table of document.querySelectorAll('table')){
+      const head=table.querySelector('thead tr:first-child');
+      if(!head||!table.querySelector('tbody tr'))continue;
+      let index=0;
+      for(const th of head.querySelectorAll('th')){
+        const span=Math.max(1,parseInt(th.getAttribute('colspan')||'1',10)||1);
+        const title=normalize(th.innerText||th.textContent);
+        const isGroup=category.synonyms.some(s=>title.includes(normalize(s)));
+        const wrongProcedural=category.key==='PROCEDIMENTAL'&&
+          title.includes('TRABALHOS EM GRUPO')&&!title.includes('PROCEDIMENTAL');
+        if(isGroup&&!wrongProcedural&&span>=2)return {table,start:index,title};
+        index+=span;
+      }
+    }
+    return null;
+  }
+  function prepare(category){
+    if(!data)throw Error('Carregue primeiro a planilha.');
+    const group=findGroup(category);
+    if(!group)throw Error('Grupo '+category.key+' não encontrado no cabeçalho do SEGES.');
+    const rows=Array.from(group.table.querySelectorAll('tbody tr')).filter(tr=>
+      tr.cells?.length>group.start+1&&tr.cells[1]);
+    const site=new Map();
+    for(const tr of rows){
+      const name=normalize(tr.cells[1].innerText||tr.cells[1].textContent);
+      if(!name)continue;
+      if(!site.has(name))site.set(name,[]);
+      site.get(name).push(tr);
+    }
+    const sheetCounts=new Map();
+    for(const r of data.slice(1)){
+      const name=normalize(r?.[0]);if(name)sheetCounts.set(name,(sheetCounts.get(name)||0)+1);
+    }
+    const entries=[],problems=[],changes=[];
+    let missing=0,duplicates=0,invalid=0,replacements=0;
+    for(let i=1;i<data.length;i++){
+      const r=data[i]||[],name=normalize(r[0]);
+      if(!name)continue;
+      if(sheetCounts.get(name)>1||site.get(name)?.length>1){
+        duplicates++;problems.push('Linha '+(i+1)+': nome repetido ('+name+')');continue;
+      }
+      const tr=site.get(name)?.[0];
+      if(!tr){missing++;problems.push('Linha '+(i+1)+': não encontrado ('+name+')');continue;}
+      const values=category.excel.map(col=>normalizeGrade(r[col]));
+      const labels=[];
+      values.forEach((value,j)=>{
+        if(value.status==='blank'){labels.push((j?'Recuperação':'Avaliação')+': vazia');return;}
+        if(value.status==='invalid'){
+          invalid++;labels.push((j?'Recuperação':'Avaliação')+': inválida');
+          problems.push('Linha '+(i+1)+': nota inválida');return;
+        }
+        const cell=tr.cells[group.start+j];
+        const input=cell?.querySelector('input[type="number"], input[type="text"]');
+        if(!input||input.disabled||input.readOnly){
+          problems.push('Linha '+(i+1)+': campo indisponível ('+(j?'Recuperação':'Avaliação')+')');
+          return;
+        }
+        const old=String(input.value||'').trim(),fresh=String(value.value);
+        if(old===fresh){labels.push('Sem alteração');return;}
+        if(old)replacements++;
+        changes.push({tr,input,name,old,value:fresh,category:category.key});
+        labels.push((j?'Recuperação':'Avaliação')+(old?' — substituir '+old:' — preencher'));
+      });
+      entries.push({name,values,labels});
+    }
+    return {category,group,entries,changes,problems,missing,duplicates,invalid,replacements};
+  }
+  function showPreview(plan){
+    proposal=plan;
+    $('#preview').hidden=false;
+    $('#preview-title').textContent='Conferir '+plan.category.key+' — '+plan.group.title;
+    $('#summary').textContent=plan.entries.length+' estudante(s) correspondentes, '+
+      plan.changes.length+' nota(s) a preencher, '+plan.replacements+
+      ' valor(es) já preenchido(s) a substituir, '+plan.missing+
+      ' não encontrado(s), '+plan.duplicates+' duplicado(s), '+
+      plan.invalid+' valor(es) inválido(s).';
+    $('#preview-body').innerHTML=plan.entries.map(entry=>
+      '<tr><td>'+html(entry.name)+'</td>'+
+      entry.values.map(v=>'<td class="right">'+(v.status==='valid'?String(v.value):'—')+'</td>').join('')+
+      '<td>'+html(entry.labels.join(' · ')||'Sem alteração')+'</td></tr>'
+    ).join('')||'<tr><td colspan="4">Nenhum estudante correspondente.</td></tr>';
+    $('#warnings').textContent=plan.problems.slice(0,30).join('\n')+
+      (plan.problems.length>30?'\n... e mais '+(plan.problems.length-30)+' aviso(s).':'');
+    $('#apply').disabled=!plan.changes.length;
+    status('Confira os dados. Nenhuma nota foi preenchida ainda.');
+    $('#preview').scrollIntoView({block:'start',behavior:'smooth'});
+  }
+  function scrollToInput(el){
+    let wrap=el.parentElement;
+    while(wrap&&wrap!==document.body){
+      const style=getComputedStyle(wrap);
+      if(/auto|scroll/.test(style.overflow+' '+style.overflowX+' '+style.overflowY))break;
+      wrap=wrap.parentElement;
+    }
+    if(wrap&&wrap.scrollWidth>wrap.clientWidth){
+      const a=el.getBoundingClientRect(),b=wrap.getBoundingClientRect();
+      wrap.scrollLeft+=(a.left+a.width/2)-(b.left+b.width/2);
+      wrap.scrollTop+=(a.top+a.height/2)-(b.top+b.height/2);
+    }
+  }
+  function applyGrades(){
+    const plan=proposal;
+    if(!plan||!plan.changes.length||busy)return;
+    if(!document.documentElement.contains(plan.group.table)){
+      status('A tabela do SEGES mudou; confira a prévia novamente.');return;
+    }
+    if(!window.confirm('Aplicar '+plan.changes.length+' nota(s) de '+plan.category.key+
+      ' nesta turma?\n'+plan.replacements+' valor(es) existente(s) serão substituídos.'+
+      '\nO SEGES pode salvar automaticamente.'))return;
+    busy=true;
+    $('#apply').disabled=true;
+    let done=0,skipped=0;
+    try{
+      for(const change of plan.changes){
+        if(!document.documentElement.contains(change.input)||change.input.disabled||
+           change.input.readOnly||String(change.input.value||'').trim()!==change.old||
+           normalize(change.tr.cells?.[1]?.innerText||change.tr.cells?.[1]?.textContent)!==change.name){
+          skipped++;continue;
+        }
+        scrollToInput(change.input);
+        change.input.focus();
+        change.input.value=change.value;
+        change.input.dispatchEvent(new Event('input',{bubbles:true}));
+        change.input.dispatchEvent(new Event('change',{bubbles:true}));
+        change.input.blur();
+        done++;
+      }
+      status(plan.category.key+': '+done+' campo(s) preenchido(s). '+
+        skipped+' ignorado(s) por terem mudado desde a revisão. '+
+        'Confira os registros e eventual salvamento no SEGES.');
+      proposal=null;
+      $('#preview').hidden=true;
+    }catch(err){status('Interrompido após '+done+' alteração(ões): '+String(err?.message||err));}
+    finally{busy=false;}
+  }
+  async function readExcel(file){
+    if(!file)return;
+    busy=true;proposal=null;data=null;
+    $('#preview').hidden=true;
+    $$('[data-category]').forEach(b=>b.disabled=true);
+    status('Lendo planilha...');
+    try{
+      if(!/\.xlsx$/i.test(file.name))throw Error('Escolha um arquivo .xlsx.');
+      if(typeof XLSX==='undefined')throw Error('Biblioteca XLSX indisponível. Recarregue a página com acesso à internet.');
+      const array=await file.arrayBuffer();
+      const wb=XLSX.read(array,{type:'array'});
+      const first=wb.SheetNames?.[0];
+      if(!first)throw Error('Planilha sem abas.');
+      const table=XLSX.utils.sheet_to_json(wb.Sheets[first],{header:1,defval:''});
+      if(table.length<2)throw Error('Nenhum registro após o cabeçalho.');
+      data=table;
+      $('#filename').textContent=file.name+' · aba '+first+' · '+(table.length-1)+' registro(s).';
+      $$('[data-category]').forEach(b=>b.disabled=false);
+      status('Planilha lida. Selecione uma categoria para revisar as notas.');
+    }catch(err){
+      $('#filename').textContent='Falha na importação.';
+      status('Erro: '+String(err?.message||err));
+    }finally{busy=false;}
+  }
+  $('#categories').innerHTML=CATEGORIES.map(c=>
+    '<button type="button" data-category="'+c.key+'" disabled>Conferir '+c.key+'</button>').join('');
+  $('#open').onclick=()=>displayWorkspace(true);
+  $('#close').onclick=()=>displayWorkspace(false);
+  $('#back').onclick=()=>{proposal=null;$('#preview').hidden=true;status('Escolha uma categoria.');};
+  $('#apply').onclick=applyGrades;
+  $('#file').addEventListener('change',event=>readExcel(event.target.files?.[0]));
+  $('#categories').addEventListener('click',event=>{
+    const button=event.target.closest('[data-category]');
+    if(!button||button.disabled||busy)return;
+    const cat=CATEGORIES.find(c=>c.key===button.dataset.category);
+    if(!cat)return;
+    try{showPreview(prepare(cat));}
+    catch(err){proposal=null;$('#preview').hidden=true;status('Erro: '+String(err?.message||err));}
+  });
+}
 
   function iniciarModuloFaltas() {
     (function () {
@@ -2039,7 +2328,7 @@ function iniciarModuloPlanos() {
     const el=document.createElement('div');
     el.id='seges-v3-panel';
     el.dataset.segesVersion='3.3.0';
-    el.innerHTML=`<div class="head">SEGES • Assistente v3.3.3 — Planos</div><div class="body">
+    el.innerHTML=`<div class="head">SEGES • Assistente v3.4.0 — Planos</div><div class="body">
       <div id="seges-v3-status" style="margin-bottom:8px">Pronto. Nada será retomado depois que a guia for fechada.</div>
       <div style="height:9px;background:#e1eaf2;border-radius:8px;overflow:hidden"><div id="seges-v3-progress" style="height:100%;width:0;background:#1578b3"></div></div>
       <div id="seges-v3-percentage" style="font-size:11px;text-align:right">0%</div>
@@ -2190,7 +2479,7 @@ function iniciarModuloPlanos() {
       .map(line=>line.replace(/(https?:\/\/[^\s?#)]+)\?[^\s)]+/g,'$1?[parâmetros ocultos]'))
       .join('\n');
     return [
-      'SEGES • Assistente 3.3.3',
+      'SEGES • Assistente 3.4.0',
       'Etapa: '+String(etapa||'Não identificada'),
       'Plano: '+String(contexto||'Não identificado'),
       'Erro: '+message,
