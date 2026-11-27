@@ -20,7 +20,7 @@ O módulo de **Notas** foi integrado ao mesmo arquivo do Violentmonkey. Ele é a
 ### Como usar
 
 1. Abra **Notas** no SEGES e escolha a turma. Na página da turma, clique no lançador **SEGES • Notas → Importar Excel**.
-2. Escolha um arquivo `.xlsx`; a primeira aba será lida pela biblioteca SheetJS v0.18.5 (a mesma dependência do script de origem, carregada pelo Violentmonkey).
+2. Escolha um arquivo `.xlsx`; a primeira aba será lida pela biblioteca SheetJS v0.18.5 (a mesma dependência do script de origem, carregada pelo Violentmonkey). **Desative o script separado “SEGES Autofill — Prof. Samuel Louzada” se ele também estiver instalado, para evitar duas automações concorrentes.**
 3. Clique em **Conferir CONCEITUAL**, **PROCEDIMENTAL**, **ATITUDINAL** ou **INTERDISCIPLINAR**. As categorias podem ser tratadas separadamente, como no script original.
 4. Confira a prévia, os estudantes localizados por nome, as notas arredondadas, as substituições e os avisos de ausências/duplicações.
 5. Clique em **Aplicar notas conferidas** e confirme. O script altera os campos do SEGES e dispara os eventos de edição do formulário. **O SEGES pode salvar automaticamente; confira sempre o resultado no próprio site.**
