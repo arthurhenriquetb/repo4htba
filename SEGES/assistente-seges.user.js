@@ -342,7 +342,8 @@
         let pararSolicitado = false;
         let contextoAtual = {turma:'',mes:'',periodo:'',disciplina:''};
         let progressoAtual = {concluidos:0,total:0};
-        let relatorio = {validados:0,semPlano:[],revisao:[],mesesIgnorados:[]};
+        let relatorio = {validados:0,jaValidados:0,comPlano:0,semPlano:[],revisao:[],mesesIgnorados:[],semConferencia:[]};
+        let cacheAuditoriaPlanos = new Map();
         let linhasLog = [];
     
         function registrarLog(mensagem){
@@ -375,6 +376,91 @@
       return partes.filter(Boolean).join(' • ');
     }
     
+        function normalizarAula(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toLowerCase();}
+
+        function dataISOaula(el){
+ const period=String(contextoAtual.periodo||'').match(/^(\d{1,2})\/(20\d{2})$/);
+ const variants=[el.getAttribute?.('data-date'),el.getAttribute?.('title'),el.textContent].filter(Boolean);
+ for(const x of variants){
+  const v=String(x).trim();let m=v.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
+  let y,mo,d;
+  if(m){y=+m[1];mo=+m[2];d=+m[3];}
+  else if((m=v.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/))){y=+m[3];mo=+m[2];d=+m[1];}
+  else if(period&&(m=v.match(/^(\d{1,2})$/))){y=+period[2];mo=+period[1];d=+m[1];}
+  else continue;
+  const t=new Date(Date.UTC(y,mo-1,d));
+  if(t.getUTCFullYear()===y&&t.getUTCMonth()===mo-1&&t.getUTCDate()===d)
+   return [y,String(mo).padStart(2,'0'),String(d).padStart(2,'0')].join('-');
+ }
+ return '';
+}
+
+        function semanaISOaula(iso){
+ const [y,m,d]=iso.split('-').map(Number),t=new Date(Date.UTC(y,m-1,d));
+ t.setUTCDate(t.getUTCDate()+4-(t.getUTCDay()||7));
+ return Math.ceil(((t-new Date(Date.UTC(t.getUTCFullYear(),0,1)))/86400000+1)/7);
+}
+
+        function conferirAulasDoFormulario(doc,iso,subject){
+ const rows=[...doc.querySelectorAll('#weekly_plan tr.by-curriculum-discipline')];
+ if(!rows.length)return {status:'unknown',reason:'formulário sem lista de aulas reconhecível'};
+ const target=normalizarAula(subject);
+ const matched=rows.filter(tr=>{
+  const date=String(tr.querySelector('input[name*="[date]"]')?.value||'').slice(0,10);
+  return date===iso&&normalizarAula(tr.querySelectorAll('td')[1]?.textContent)===target;
+ });
+ if(!matched.length)return {status:'unknown',reason:'data/disciplina não associadas exatamente às aulas do plano'};
+ const empty=matched.filter(tr=>{
+  const text=String(tr.querySelector('textarea')?.value||'').trim();
+  const ability=[...tr.querySelectorAll('.structured-weekly-plan-id-select')]
+    .some(sel=>String(sel.value||'').trim()&&[...(sel.options||[])].some(o=>String(o.value)===String(sel.value)));
+  return !text&&!ability;
+ }).length;
+ if(empty===matched.length)return {status:'missing',reason:empty+' aula(s) sem habilidade e sem texto no plano semanal'};
+ if(empty)return {status:'partial',reason:empty+' de '+matched.length+' aula(s) sem conteúdo planejado'};
+ return {status:'present',reason:matched.length+' aula(s) com texto ou habilidade planejada'};
+}
+
+        async function auditarPlanoDaAula(link){
+ const iso=dataISOaula(link);
+ if(!iso)return {status:'unknown',reason:'não foi possível identificar a data completa'};
+ const options=Array.isArray(window.classrooms)?window.classrooms.filter(c=>normalizarAula(c.name)===normalizarAula(contextoAtual.turma)):[];
+ const id=options.length===1?(options[0].id||options[0].classroom_id):null;
+ if(!id||!/^\d+$/.test(String(id)))return {status:'unknown',reason:'identificador da turma não disponível'};
+ async function read(href){
+  if(pararSolicitado)throw Error('Interrompido.');
+  const u=new URL(href,location.origin);
+  if(u.origin!==location.origin||!/^\/weekly_plans(?:\/|$)/.test(u.pathname))throw Error('URL de plano inválida.');
+  const ac=new AbortController(),timer=setTimeout(()=>ac.abort(),12000);
+  try{
+   const res=await fetch(u.href,{method:'GET',credentials:'same-origin',cache:'no-store',signal:ac.signal});
+   if(!res.ok||!new URL(res.url).pathname.startsWith('/weekly_plans'))throw Error('HTTP '+res.status);
+   return new DOMParser().parseFromString(await res.text(),'text/html');
+  }finally{clearTimeout(timer);}
+ }
+ try{
+  const listKey='list:'+id;
+  if(!cacheAuditoriaPlanos.has(listKey))
+   cacheAuditoriaPlanos.set(listKey,await read('/weekly_plans?classroom_id='+encodeURIComponent(id)));
+  const week=semanaISOaula(iso);
+  const row=[...cacheAuditoriaPlanos.get(listKey).querySelectorAll('table.table.table-striped tbody tr.middle')]
+   .find(tr=>Number(tr.querySelectorAll('td')[0]?.textContent?.trim())===week);
+  if(!row)return {status:'unknown',reason:'semana '+week+' não localizada no catálogo da turma'};
+  const a=row.querySelector('a.btn.btn-sm.btn-primary');
+  if(!a)return {status:'unknown',reason:'link do plano não localizado'};
+  const u=new URL(a.getAttribute('href'),location.origin);
+  if(/^\/weekly_plans\/new\/?$/.test(u.pathname))return {status:'missing',reason:'sem plano semanal cadastrado na semana '+week};
+  if(u.origin!==location.origin||!/^\/weekly_plans\/\d+(?:\/edit)?\/?$/.test(u.pathname))
+   return {status:'unknown',reason:'link do plano não reconhecido'};
+  const key='week:'+id+':'+week;
+  if(!cacheAuditoriaPlanos.has(key))cacheAuditoriaPlanos.set(key,await read(u.href));
+  return conferirAulasDoFormulario(cacheAuditoriaPlanos.get(key),iso,contextoAtual.disciplina);
+ }catch(e){
+  if(pararSolicitado)throw e;
+  return {status:'unknown',reason:'consulta não concluída: '+String(e?.message||e)};
+ }
+}
+
         function detectarSemPlanoSemanal(modal){
       const texto=(modal.innerText||modal.textContent||'')
         .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
@@ -942,7 +1028,8 @@
                 pararSolicitado = false;
                 contextoAtual = {turma:'',mes:'',periodo:'',disciplina:''};
                 progressoAtual = {concluidos:0,total:selecao.turmas.length*selecao.meses.length};
-                relatorio = {validados:0,semPlano:[],revisao:[],mesesIgnorados:[]};
+                relatorio = {validados:0,jaValidados:0,comPlano:0,semPlano:[],revisao:[],mesesIgnorados:[],semConferencia:[]};
+                cacheAuditoriaPlanos = new Map();
                 linhasLog = [];
                 atualizarTurmaAtual('preparando...');
                 atualizarProgresso(0,progressoAtual.total);
