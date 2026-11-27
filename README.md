@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.4.0**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.5.0**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -42,6 +42,30 @@ A comparação é feita pelo nome do estudante (sem diferenciar caixa, acentos e
 - [3.3.3 pré-notas](SEGES/arquivo/assistente-seges-v3.3.3-pre-notas.user.js), cópia do estado do repositório antes da integração
 
 **Testes:** sintaxe de todo o código, montagem da interface isolada, carregamento simulado da primeira aba de Excel, prévia de notas, identificação de nomes, valores arredondados, preservação de células vazias e aplicação após confirmação. A automação ainda não foi testada em sessão autenticada do SEGES nem com a planilha real. Teste inicialmente **uma categoria e uma turma** e confira o resultado no SEGES antes de lançar notas em lote.
+
+## Novidades v3.5.0 — texto livre e conferência aula por aula
+
+### Texto livre no planejamento
+
+Na prévia **Preencher planos → Ver sugestões e revisar**, cada aula exibida agora possui uma caixa **Texto livre da aula**. Você pode escrever um texto próprio para uma aula específica, independentemente da habilidade curricular e das duas metodologias. A digitação fica em memória durante a revisão, inclusive ao trocar páginas; o programa usa o texto atualizado na confirmação e no salvamento.
+
+As disciplinas com modelos padrão continuam oferecendo **Editar texto padrão**, que aplica o mesmo modelo às aulas da disciplina. Uma edição individual do campo livre prevalece naquela aula, sem alterar as outras turmas. Textos que já constam no SEGES são mostrados em campo somente leitura e não são substituídos automaticamente.
+
+O programa aceita uma aula de Ciências apenas com texto livre, caso não seja selecionada uma habilidade. As exigências de duas metodologias continuam valendo quando se aprova uma habilidade estruturada. A gravação só acontece depois de **Aprovar e preencher** e da confirmação.
+
+### Diário / validador: conferir todas as aulas, inclusive as feitas
+
+A varredura agora inspeciona os links de todas as datas na tabela de frequência, não somente os que apareciam como pendentes (`cell-warning`). Ela também examina datas que o SEGES marca como feitas, sem clicar novamente em **Sim** nas já concluídas identificadas.
+
+Quando consegue reconhecer a turma e a data, o programa consulta, **somente para leitura**, a listagem dos Planos Semanais da turma e o plano da semana correspondente. Ele compara **data e disciplina**, verificando as linhas daquele dia: se nenhuma habilidade nem texto estiver preenchido para a aula, registra **SEM PLANO ESPECÍFICO**; caso parte das aulas esteja vazia, registra planejamento parcial. Portanto, a simples existência de um plano da semana não significa que todas as suas aulas possuem planejamento.
+
+Se não conseguir associar a aula ao formulário com segurança, informa **PLANO NÃO VERIFICÁVEL**, em vez de afirmar que está vazio. Para evitar novas validações sem comprovação do planejamento, não confirma automaticamente essas aulas nem as identificadas como vazias; elas precisam de revisão manual. As aulas já feitas são examinadas e reportadas, nunca revalidadas automaticamente. O log e o resumo exibem essas categorias separadamente.
+
+O programa reaproveita em memória as consultas de uma mesma turma/semana, mas essa inspeção detalhada pode ser mais lenta que a verificação anterior. **Teste inicialmente apenas uma turma e um mês**. O cruzamento com o SEGES real ainda não foi testado em uma sessão autenticada.
+
+### Versão anterior preservada
+
+- [SEGES v3.4.0 estável antes das alterações](SEGES/arquivo/assistente-seges-v3.4.0-estavel.user.js)
 
 ## Planos semanais: interface nova (v3)
 
