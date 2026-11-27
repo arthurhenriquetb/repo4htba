@@ -1,6 +1,6 @@
 # SEGES • Assistente
 
-**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.3.1**.
+**Um único userscript para Violentmonkey**, com módulos detectados automaticamente nas telas do SEGES/SEDU-ES. A versão principal é **3.3.2**.
 
 **Arquivo para instalar:** [SEGES/assistente-seges.user.js](SEGES/assistente-seges.user.js)
 
@@ -49,6 +49,16 @@ A automação não escolhe mais a primeira metodologia do dropdown, o que anteri
 Na **tabela de revisão**, cada aula estruturada dispõe de **dois seletores de metodologia**. Você pode mudar qualquer um. Após uma alteração, o programa pergunta se deseja aplicar a mesma combinação às aulas equivalentes das **outras turmas do mesmo ano, na mesma semana, disciplina e posição da aula**. A aplicação só ocorre quando o SEGES disponibiliza essas opções na turma de destino; as aulas já preenchidas são preservadas por padrão.
 
 Se o SEGES não oferecer as duas metodologias desejadas, o programa mostra o problema na revisão e **não permite autorizar aquela aula com menos de duas metodologias diferentes**. Você poderá escolher alternativas disponíveis ou marcar **Não preencher**. O script não cria metodologias artificiais nem as substitui automaticamente por jogos.
+
+### Editar textos padrão durante a revisão (v3.3.2)
+
+Nas linhas de disciplinas com **texto padrão**, a prévia de **Preencher planos → Ver sugestões e revisar** apresenta o botão **Editar texto padrão**. O botão abre, dentro da própria revisão, o texto completo daquela disciplina para edição. Ao clicar em **Aplicar a esta disciplina**, o texto modificado passa a ser a proposta para **todas as aulas dessa mesma disciplina nas turmas e semanas selecionadas**, inclusive nas outras páginas da revisão.
+
+A tela informa quantas aulas e turmas são abrangidas. Aulas que já possuem texto no SEGES continuam preservadas. Caixas **Preencher texto padrão** desmarcadas permanecem desmarcadas; a edição não as marca por conta própria. O texto editado é mantido **somente na memória da revisão atual**, sem alterar os textos fixos originais do script nem persistir dados no navegador. Uma nova execução usa os modelos originais.
+
+Na confirmação final, o programa indica quantas aulas receberão textos personalizados. Nada é enviado até o usuário clicar em **Aprovar e preencher** e confirmar.
+
+**Testes simulados:** propagação entre turmas e semanas, isolamento entre disciplinas, proteção de planos existentes, botão e formulário de edição, gravação do texto aprovado em campo vazio, preservação de campos preenchidos e cancelamento da confirmação sem gravar. A integração real ainda depende de validação no SEGES autenticado.
 
 ### Correção da tela reduzida ao canto (v3.3.1)
 
