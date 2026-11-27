@@ -2889,7 +2889,13 @@ function iniciarModuloPlanos() {
   const rows=visible.map(line=>{
     const {cls,week,row,value,options,history}=line;
     const skillSelector=line.manual?
-      `<label><input type="checkbox" data-proposal-key="${html(line.key)}" ${value==='TEXT'?'checked':''}> Escrever texto padrão</label>`:
+      `<div style="display:flex;flex-direction:column;gap:6px;min-width:240px;max-width:340px;white-space:normal">
+        <label><input type="checkbox" data-proposal-key="${html(line.key)}" ${value==='TEXT'?'checked':''}> Preencher texto padrão</label>
+        <button type="button" data-edit-standard-key="${html(line.key)}">Editar texto padrão</button>
+        <span style="font-size:11px;color:#587084;text-align:left;white-space:normal">
+          ${line.manualEdited?'<b>Texto personalizado:</b> ':''}${html(String(line.manualText||'').slice(0,130))}${String(line.manualText||'').length>130?'…':''}
+        </span>
+      </div>`:
       `<select data-proposal-key="${html(line.key)}" style="min-width:250px;max-width:360px">
         <option value="" ${!value?'selected':''}>Não preencher</option>
         ${row.existingSkill?`<option value="__keep" ${value==='__keep'?'selected':''}>Preservar registro existente</option>`:''}
@@ -2914,8 +2920,19 @@ function iniciarModuloPlanos() {
       <td title="${html(history.join(' → '))}" style="font-size:11px;color:#63768a">
         ${html(history.filter(Boolean).slice(0,5).join(', ')||'Sem histórico curricular')}</td></tr>`;
   }).join('');
-  const root=modal(`<h3>Conferir habilidades e metodologias</h3>
-    <p class="hint">Nenhum plano foi gravado. As duas metodologias sugeridas são <b>Aula expositiva dialogada</b> e <b>Resolução de exercícios</b>. É possível trocar cada uma. Se você alterar uma metodologia, será perguntado se deseja replicá-la nas aulas equivalentes das outras turmas do mesmo ano.</p>
+  const root=modal(`<h3>Conferir habilidades, metodologias e textos padrão</h3>
+    <p class="hint">Os textos padrão também podem ser editados nesta revisão, por disciplina, para todas as turmas e semanas selecionadas. Nenhum plano foi gravado.</p>
+    <p class="hint">As duas metodologias sugeridas são <b>Aula expositiva dialogada</b> e <b>Resolução de exercícios</b>. É possível trocar cada uma. Se você alterar uma metodologia, será perguntado se deseja replicá-la nas aulas equivalentes das outras turmas do mesmo ano.</p>
+    <section id="seges-v3-text-editor" style="display:none;background:#f5f8fc;border:1px solid #cad9e6;border-radius:9px;padding:15px;margin:14px 0;white-space:normal">
+      <h4 style="font-size:16px;margin:0 0 8px">Editar texto padrão — <span id="seges-v3-text-discipline"></span></h4>
+      <p class="hint" id="seges-v3-text-scope"></p>
+      <textarea id="seges-v3-text-input" rows="8" style="width:100%;display:block;resize:vertical;line-height:1.5;font-size:13px"></textarea>
+      <p class="hint">O texto será atualizado somente nesta revisão. Aulas com texto já registrado no SEGES não serão substituídas.</p>
+      <div class="actions">
+        <button type="button" id="seges-v3-text-cancel">Cancelar edição</button>
+        <button type="button" id="seges-v3-text-save" class="primary">Aplicar a esta disciplina</button>
+      </div>
+    </section>
     <p class="hint"><strong>${result.suggested.length} aula(s) para conferir.</strong> ${result.suggested.length ? 'A tabela abaixo é editável.' : 'Nenhuma aula elegível encontrada. Volte à tabela e escolha outras semanas.'}</p>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:7px 0 10px">
       <button id="seges-v3-page-prev" type="button" ${currentPage===0?'disabled':''}>Anterior</button>
@@ -2924,7 +2941,7 @@ function iniciarModuloPlanos() {
       <span class="hint">Página ${currentPage+1} de ${pages}. As alterações nas outras páginas também são mantidas.</span>
     </div>
     <div class="scroll"><table><thead><tr>
-      <th>Turma</th><th>Semana</th><th>Aula</th><th>Disciplina</th><th>Habilidade</th>
+      <th>Turma</th><th>Semana</th><th>Aula</th><th>Disciplina</th><th>Habilidade / texto padrão</th>
       <th>Metodologias (duas)</th><th>Últimos planos</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="7" style="padding:18px">Não há aulas para revisar nas semanas selecionadas.</td></tr>'}</tbody></table></div>
     <p class="hint" id="seges-v3-warning">${result.warnings.length?html(result.warnings.join(' | ')):''}</p>
@@ -2934,6 +2951,39 @@ function iniciarModuloPlanos() {
       <button id="seges-v3-cancel" class="danger">Cancelar</button>
       <button id="seges-v3-approve" class="primary">Aprovar e preencher</button>
     </div>`);
+  root.onclick=event=>{
+    const trigger=event.target.closest('[data-edit-standard-key]');
+    if(!trigger)return;
+    const source=result.suggested.find(line=>line.key===trigger.dataset.editStandardKey);
+    if(!source?.manual || !source.manualGroupKey)return;
+    const sameDiscipline=result.suggested.filter(line=>
+      line.manual && line.manualGroupKey===source.manualGroupKey);
+    const enabled=sameDiscipline.filter(line=>line.value==='TEXT');
+    const editor=$('#seges-v3-text-editor',root);
+    const input=$('#seges-v3-text-input',root);
+    const caption=$('#seges-v3-text-discipline',root);
+    const scope=$('#seges-v3-text-scope',root);
+    if(!editor||!input)return;
+    caption.textContent=source.row.discipline;
+    scope.textContent='Este texto será usado em '+sameDiscipline.length+
+      ' aula(s) de '+new Set(sameDiscipline.map(line=>line.cls.id)).size+
+      ' turma(s), considerando todas as semanas selecionadas. Atualmente '+enabled.length+
+      ' aula(s) estão marcadas para preenchimento; as demais continuarão desmarcadas.';
+    input.value=source.manualText||'';
+    editor.style.display='block';
+    $('#seges-v3-text-cancel',root).onclick=()=>{editor.style.display='none';};
+    $('#seges-v3-text-save',root).onclick=()=>{
+      const custom=String(input.value||'').trim();
+      if(!custom){alert('O texto padrão não pode ficar vazio. Escreva o texto antes de aplicar.');return;}
+      quadroAtual.manualTextOverrides.set(source.manualGroupKey,custom);
+      const count=sameDiscipline.filter(line=>line.value==='TEXT').length;
+      mostrarPrevia();
+      status('Texto padrão de '+source.row.discipline+' atualizado para '+count+
+        ' aula(s) marcadas. Nenhum plano foi salvo.');
+    };
+    editor.scrollIntoView({block:'start',behavior:'smooth'});
+    input.focus();
+  };
   $('#seges-v3-page-prev',root).onclick=()=>{
     if(currentPage>0){quadroAtual.previewPage=currentPage-1;mostrarPrevia();}
   };
