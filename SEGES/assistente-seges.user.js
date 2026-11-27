@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.3.2
+// @version      3.3.3
 // @description  Um script para faltas e planejamento; tabela de turmas, revisão prévia e execução sem retomada.
 // @author       Prof. Arthur
 // @match        https://seges.sedu.es.gov.br/*
@@ -2039,7 +2039,7 @@ function iniciarModuloPlanos() {
     const el=document.createElement('div');
     el.id='seges-v3-panel';
     el.dataset.segesVersion='3.3.0';
-    el.innerHTML=`<div class="head">SEGES • Assistente v3.3.2 — Planos</div><div class="body">
+    el.innerHTML=`<div class="head">SEGES • Assistente v3.3.3 — Planos</div><div class="body">
       <div id="seges-v3-status" style="margin-bottom:8px">Pronto. Nada será retomado depois que a guia for fechada.</div>
       <div style="height:9px;background:#e1eaf2;border-radius:8px;overflow:hidden"><div id="seges-v3-progress" style="height:100%;width:0;background:#1578b3"></div></div>
       <div id="seges-v3-percentage" style="font-size:11px;text-align:right">0%</div>
@@ -2190,7 +2190,7 @@ function iniciarModuloPlanos() {
       .map(line=>line.replace(/(https?:\/\/[^\s?#)]+)\?[^\s)]+/g,'$1?[parâmetros ocultos]'))
       .join('\n');
     return [
-      'SEGES • Assistente 3.3.2',
+      'SEGES • Assistente 3.3.3',
       'Etapa: '+String(etapa||'Não identificada'),
       'Plano: '+String(contexto||'Não identificado'),
       'Erro: '+message,
@@ -2223,17 +2223,38 @@ function iniciarModuloPlanos() {
   }
   async function buscarPagina(href) {
     verificarAtivo();
-    const url=urlSeges(href);if(!url)throw Error('URL fora da área de planos do SEGES.');
-    const response=await fetch(url.href,{method:'GET',credentials:'same-origin',cache:'no-store',signal:controller.signal});
-    verificarAtivo();
-    const returned=urlSeges(response.url);
-    if(!response.ok||!returned||!returned.pathname.startsWith(BASE))
-      throw Error('Página do SEGES indisponível ou sessão expirada (HTTP '+response.status+').');
-    const body=await response.text();
-    verificarAtivo();
-    const doc=new DOMParser().parseFromString(body,'text/html');
-    if(!doc.querySelector('body'))throw Error('O SEGES devolveu uma página inválida.');
-    return doc;
+    const url=urlSeges(href);
+    if(!url)throw Error('URL fora da área de planos do SEGES.');
+    const parentSignal=controller?.signal;
+    const requestController=new AbortController();
+    const cancelRequest=()=>requestController.abort();
+    if(parentSignal?.aborted)throw Error('A operação foi cancelada.');
+    parentSignal?.addEventListener('abort',cancelRequest,{once:true});
+    // Uma página que não responde não deve bloquear indefinidamente a revisão.
+    const timeout=setTimeout(()=>requestController.abort(),15000);
+    try{
+      const response=await fetch(url.href,{
+        method:'GET',credentials:'same-origin',cache:'no-store',
+        signal:requestController.signal
+      });
+      verificarAtivo();
+      const returned=urlSeges(response.url);
+      if(!response.ok||!returned||!returned.pathname.startsWith(BASE))
+        throw Error('Página do SEGES indisponível ou sessão expirada (HTTP '+response.status+').');
+      const body=await response.text();
+      verificarAtivo();
+      const doc=new DOMParser().parseFromString(body,'text/html');
+      if(!doc.querySelector('body'))throw Error('O SEGES devolveu uma página inválida.');
+      return doc;
+    }catch(error){
+      if(cancelado||parentSignal?.aborted)throw Error('A operação foi cancelada.');
+      if(requestController.signal.aborted)
+        throw Error('Tempo de resposta excedido (15 segundos) ao consultar uma página do SEGES.');
+      throw error;
+    }finally{
+      clearTimeout(timeout);
+      parentSignal?.removeEventListener('abort',cancelRequest);
+    }
   }
   function turmasDisponiveis(doc) {
     const seen=new Set();
@@ -2542,33 +2563,42 @@ function iniciarModuloPlanos() {
   async function prepararPrevia() {
     iniciarOperacao();
     const selected=semanasSelecionadas();
-    if(!selected.length){encerrarOperacao();alert('Marque ao menos uma semana.');return;}
-    try {
-      $('#seges-v3-preview').disabled=true;
+    if(!selected.length){
+      encerrarOperacao();
+      alert('Marque ao menos uma semana.');
+      return;
+    }
+    const button=$('#seges-v3-preview');
+    if(button)button.disabled=true;
+    try{
       const chosen=new Map();
       for(const cls of selected)for(const week of cls.weeks)
         chosen.set(cls.id+':'+week.week,{cls,week});
-      progresso={atual:0,total:chosen.size};atualizarProgresso();
+      // A barra não deve chegar a 100% antes de abrir a revisão.
+      // Etapa 1 = 35%, históricos = 55%, montagem = 10%.
+      progresso={atual:0,total:100};
+      atualizarProgresso();
+      let completed=0;
       for(const {cls,week} of chosen.values()){
         verificarAtivo();
+        status('Etapa 1/3 — Lendo semanas escolhidas '+(completed+1)+'/'+chosen.size+
+          ': '+cls.name+' · semana '+week.week);
         const form=await lerSemana(cls,week);
-        progresso.atual++;atualizarProgresso();
+        completed++;
+        progresso.atual=Math.round(35*completed/chosen.size);
+        atualizarProgresso();
         if(!form.rows.length)
-          status('Sem aulas: '+cls.name+' · semana '+week.week+' — ignorada (sem gravação).');
-        else
-          status('Lendo semana escolhida: '+cls.name+' · '+week.week);
+          log('Sem aulas: '+cls.name+' · semana '+week.week+' — ignorada (sem gravação).');
       }
       const warnings=[];
-      // Consultar somente histórico relevante, reutilizando os formulários já
-      // lidos nesta guia e agrupando semanas com o mesmo período de histórico.
-      // Semanas selecionadas sem aulas nunca exigem histórico.
-      for(const cls of selected){
+      const historyUnavailable=new Set();
+      for(let index=0;index<selected.length;index++){
+        const cls=selected[index];
         verificarAtivo();
-        const activeWeeks=cls.weeks.filter(week=>(arquivos.get(cls.id+':'+week.week)?.rows?.length||0)>0);
-        if(!activeWeeks.length){
-          log('Histórico dispensado: '+cls.name+' — nenhuma aula nas semanas selecionadas.');
-          continue;
-        }
+        status('Etapa 2/3 — Histórico: turma '+(index+1)+'/'+selected.length+
+          ' · '+cls.name);
+        const activeWeeks=cls.weeks.filter(week=>
+          (arquivos.get(cls.id+':'+week.week)?.rows?.length||0)>0);
         let newReads=0;
         const historicalGroups=new Map();
         for(const week of activeWeeks){
@@ -2578,44 +2608,63 @@ function iniciarModuloPlanos() {
           const groupKey=candidates.map(item=>item.week).join(',');
           let group=historicalGroups.get(groupKey);
           if(!group){
-            group={found:0,consulted:0,cutoff:false};
+            group={found:0,consulted:0,cutoff:false,failed:0};
             for(const old of candidates){
               if(group.found>=5)break;
               verificarAtivo();
-              const key=cls.id+':'+old.week;
-              const cached=arquivos.has(key);
-              if(!cached)progresso.total++;
-              const form=await lerSemana(cls,old);
               group.consulted++;
-              if(temPlano(form))group.found++;
-              if(!cached){
-                newReads++;
-                progresso.atual++;
-                atualizarProgresso();
+              const key=cls.id+':'+old.week;
+              if(historyUnavailable.has(key)){group.failed++;continue;}
+              const cached=arquivos.has(key);
+              try{
+                const form=await lerSemana(cls,old);
+                if(temPlano(form))group.found++;
+                if(!cached)newReads++;
+              }catch(error){
+                if(cancelado||controller?.signal?.aborted)throw error;
+                historyUnavailable.add(key);
+                group.failed++;
+                const why=String(error?.message||error).slice(0,140);
+                warnings.push(cls.name+' · semana '+week.week+
+                  ': histórico da semana '+old.week+' indisponível ('+why+').');
+                log('Histórico ignorado por falha: '+cls.name+' · semana '+old.week+' — '+why);
               }
             }
             group.cutoff=group.found<5&&group.consulted>=12&&previous.length>group.consulted;
             historicalGroups.set(groupKey,group);
           }
           if(group.cutoff)warnings.push(cls.name+' · semana '+week.week+
-            ': histórico limitado a 12 semanas anteriores ('+group.found+' com plano efetivo).');
+            ': foram verificadas 12 semanas anteriores; apenas '+group.found+
+            ' tinham planos. Sugestões precisam de conferência.');
         }
-        status('Histórico de '+cls.name+': '+historicalGroups.size+
-          ' período(s), '+newReads+' consulta(s) nova(s), com formulários repetidos reaproveitados.');
+        progresso.atual=35+Math.round(55*(index+1)/selected.length);
+        atualizarProgresso();
+        status('Etapa 2/3 — Turma '+(index+1)+'/'+selected.length+
+          ' concluída: '+cls.name+'; '+newReads+' leitura(s) nova(s).');
       }
-      progresso.total=progresso.atual;atualizarProgresso();
+      verificarAtivo();
+      progresso.atual=94;
+      atualizarProgresso();
       quadroAtual.selected=selected;
       quadroAtual.historyWarnings=warnings;
       quadroAtual.overrides=new Map();
       quadroAtual.methodOverrides=new Map();
       quadroAtual.previewPage=0;
-      status('Montando a tabela de sugestões para revisão...');
+      status('Etapa 3/3 — Montando sugestões e a tabela de revisão...');
       mostrarPrevia();
       if(!$('#seges-v3-overlay #seges-v3-approve'))
-        throw Error('Não foi possível abrir a tabela de revisão. Nenhum plano foi salvo.');
-      status('Revisão aberta. Confira e aprove somente quando estiver satisfeito.');
-    }catch(error){falhar(error);}
-    finally {encerrarOperacao();}
+        throw Error('A revisão não abriu corretamente. Nenhum plano foi salvo.');
+      progresso.atual=100;
+      atualizarProgresso();
+      status('Revisão pronta. Confira as sugestões antes de aprovar qualquer plano.');
+    }catch(error){
+      falhar(error);
+    }finally{
+      encerrarOperacao();
+      const current=$('#seges-v3-preview');
+      if(current && !cancelado && !quadroAtual?.review)
+        current.disabled=false;
+    }
   }
   function etapaCompativel(cls,options) {
   const known=String(cls?.stage||etapaNome(cls?.name)||'').trim();
