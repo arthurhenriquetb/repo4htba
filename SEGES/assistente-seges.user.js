@@ -1878,220 +1878,69 @@
         // VALIDAR UMA DATA
         // =========================================================
     
-    async function validarData(data, indice, total) {
-    
-        const texto = data.textContent.trim();
-    
-        atualizarStatus(
-            `Data ${indice}/${total}: ${texto}`
-        );
-    
-        console.log(
-            `SEGES: abrindo dia ${texto}`
-        );
-    
-        // =====================================================
-        // 1. ABRE O DIA
-        // =====================================================
-    
-        data.click();
-    
-        const modal = await esperar(() => {
-            return obterModalVisivel();
-        });
-    
-        await wait(500);
-        const semPlanoSemanal = detectarSemPlanoSemanal(modal);
-    
-        // =====================================================
-        // 2. PROCURA O BOTÃO "SIM"
-        // =====================================================
-    
-        let botaoSim = null;
-    
-        const botoes = [
-            ...modal.querySelectorAll('button')
-        ].filter(visivel);
-    
-        botaoSim = botoes.find(botao => {
-    
-            return (
-                botao.textContent
-                    .trim()
-                    .toLowerCase() === 'sim'
-            );
-    
-        });
-    
-        // Fallback: botão verde contendo "Sim"
-        if (!botaoSim) {
-    
-            botaoSim = botoes.find(botao => {
-    
-                const textoBotao =
-                    botao.textContent
-                        .trim()
-                        .toLowerCase();
-    
-                return (
-                    textoBotao.includes('sim') &&
-                    botao.classList.contains('btn-success')
-                );
-    
-            });
-        }
-    
-        // =====================================================
-        // 3. SE EXISTE "SIM"
-        // =====================================================
-    
-        if (botaoSim && !semPlanoSemanal) {
-    
-            console.log(
-                `SEGES: SIM encontrado → dia ${texto}`
-            );
-    
-            botaoSim.click();
-    
-            /*
-             * MUITO IMPORTANTE:
-             *
-             * O SEGES fecha o modal depois do "Sim".
-             *
-             * Portanto NÃO procuramos "Fechar" depois
-             * de clicar em Sim.
-             */
-    
-            await esperar(() => {
-                return !obterModalVisivel();
-            });
-    
-            await wait(700);
-    
-            relatorio.validados += 1;
-            registrarLog('VALIDADO: ' + identificarDia(texto));
-            console.log(
-                `SEGES: dia ${texto} validado pelo SIM.`
-            );
-    
-            return;
-        }
-    
-        // =====================================================
-        // 4. NÃO EXISTE "SIM"
-        //
-        // Nesse caso precisamos clicar em FECHAR.
-        // =====================================================
-    
-        console.log(
-            `SEGES: SIM não apareceu → procurando FECHAR no dia ${texto}`
-        );
-    
-        // Primeiro tenta o botão Fechar do footer
-        let botaoFechar =
-            [
-                ...modal.querySelectorAll(
-                    '.modal-footer button[data-dismiss="modal"]'
-                )
-            ].find(visivel);
-    
-        // Segundo: qualquer botão com data-dismiss
-        if (!botaoFechar) {
-    
-            botaoFechar =
-                [
-                    ...modal.querySelectorAll(
-                        'button[data-dismiss="modal"]'
-                    )
-                ].find(visivel);
-        }
-    
-        // Terceiro: procura pelo texto "Fechar"
-        if (!botaoFechar) {
-    
-            botaoFechar =
-                [
-                    ...modal.querySelectorAll('button')
-                ].find(botao => {
-    
-                    if (!visivel(botao)) {
-                        return false;
-                    }
-    
-                    return botao.textContent
-                        .trim()
-                        .toLowerCase()
-                        .includes('fechar');
-    
-                });
-        }
-    
-        // Quarto: botão X
-        if (!botaoFechar) {
-    
-            botaoFechar =
-                [
-                    ...modal.querySelectorAll(
-                        'button.close'
-                    )
-                ].find(visivel);
-        }
-    
-        // =====================================================
-        // 5. CLICA FECHAR
-        // =====================================================
-    
-        if (botaoFechar) {
-    
-            console.log(
-                `SEGES: FECHAR → dia ${texto}`
-            );
-    
-            botaoFechar.click();
-    
-        } else {
-    
-            console.error(
-                'Modal encontrado, mas nenhum botão de fechamento foi localizado:',
-                modal
-            );
-    
-            throw new Error(
-                `Não encontrei o botão Fechar no dia ${texto}.`
-            );
-        }
-    
-        // =====================================================
-        // 6. ESPERA O MODAL SUMIR
-        // =====================================================
-    
-        const inicio = Date.now();
-    
-        while (
-            Date.now() - inicio < TIMEOUT
-        ) {
-    
-            if (!obterModalVisivel()) {
-                break;
-            }
-    
-            await wait(POLL);
-        }
-    
-        await wait(500);
-    
-        const ocorrencia = identificarDia(texto);
-        if (semPlanoSemanal) {
-            relatorio.semPlano.push(ocorrencia);
-            registrarLog('SEM PLANO SEMANAL: ' + ocorrencia);
-            atualizarStatus('⚠ Dia sem plano semanal: ' + texto);
-        } else {
-            relatorio.revisao.push(ocorrencia);
-            registrarLog('REVISAR: dia sem confirmação no modal: ' + ocorrencia);
-            atualizarStatus('↷ Sem confirmação; verificar: ' + texto);
-        }
-    }
-    
+    async function validarData(data,indice,total){
+ const texto=String(data.textContent||'').trim(),ref=identificarDia(texto);
+ const css=String(data.className||'')+' '+String(data.closest('th')?.className||'');
+ const jaFeito=/\bcell-(?:success|done|validated|validado|ok)\b/i.test(css);
+ atualizarStatus('Conferindo aula '+indice+'/'+total+': '+ref);
+ registrarLog('INSPECIONANDO: '+ref+(jaFeito?' [FEITA NO DIÁRIO]':''));
+ let modal;
+ try{
+  data.click();
+  modal=await esperar(()=>obterModalVisivel(),6500);
+ }catch(error){
+  relatorio.revisao.push(ref);
+  registrarLog('REVISAR: não consegui abrir o dia '+ref+': '+String(error?.message||error));
+  return;
+ }
+ await wait(300);
+ const declarada=detectarSemPlanoSemanal(modal);
+ const plano=declarada?{status:'missing',reason:'o SEGES declarou ausência de plano para esta aula'}:
+  await auditarPlanoDaAula(data);
+ if(pararSolicitado)return;
+ const faltando=plano.status==='missing'||plano.status==='partial';
+ if(faltando){
+  relatorio.semPlano.push(ref+' — '+plano.reason);
+  registrarLog('SEM PLANO ESPECÍFICO: '+ref+' — '+plano.reason+
+   (jaFeito?' [AULA JÁ MARCADA FEITA]':''));
+  atualizarStatus('⚠ Aula sem planejamento específico: '+texto);
+ }else if(plano.status==='present'){
+  relatorio.comPlano++;
+  registrarLog('PLANO CONFERIDO: '+ref+' — '+plano.reason);
+ }else{
+  relatorio.semConferencia.push(ref+' — '+plano.reason);
+  registrarLog('PLANO NÃO VERIFICÁVEL: '+ref+' — '+plano.reason);
+ }
+ if(jaFeito){
+  relatorio.jaValidados++;
+  registrarLog('JÁ VALIDADA NO DIÁRIO: '+ref+(faltando?' — FALTA PLANO DESTA AULA':''));
+ }
+ const buttons=[...modal.querySelectorAll('button')].filter(visivel);
+ const yes=buttons.find(btn=>normalizarAula(btn.textContent)==='sim')||
+  buttons.find(btn=>normalizarAula(btn.textContent).includes('sim')&&btn.classList.contains('btn-success'));
+ if(!jaFeito&&yes&&plano.status==='present'){
+  yes.click();
+  await esperar(()=>!obterModalVisivel());
+  await wait(400);
+  relatorio.validados++;
+  registrarLog('VALIDADO COM PLANO CONFIRMADO: '+ref);
+  return;
+ }
+ if(!jaFeito&&!faltando){
+  relatorio.revisao.push(ref);
+  registrarLog('SEM CONFIRMAÇÃO: '+ref+' — '+(plano.status==='unknown'?
+   'não foi possível verificar o plano exato; não cliquei Sim':
+   'o botão Sim não foi encontrado'));
+ }
+ const close=[...modal.querySelectorAll('.modal-footer button[data-dismiss="modal"], button[data-dismiss="modal"], button.close')]
+  .find(visivel)||buttons.find(btn=>normalizarAula(btn.textContent).includes('fechar'));
+ if(!close)throw Error('Botão Fechar não identificado na aula '+texto+
+  '. Parei para evitar alterar outra aula.');
+ close.click();
+ await esperar(()=>!obterModalVisivel(),6000);
+ await wait(150);
+}
+
         // =========================================================
         // VALIDAR TODAS AS DATAS DA DISCIPLINA
         // =========================================================
