@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.5.0
+// @version      3.5.1
 // @description  Faltas, planejamento e notas Excel no SEGES, com revisão antes de lançar.
 // @author       Prof. Arthur
 // @contributor  Prof. Samuel Louzada (módulo de notas, versão 2.7)
@@ -494,7 +494,7 @@
  const months=relatorio.mesesIgnorados.length?
    '\nMeses não disponíveis: '+relatorio.mesesIgnorados.length+'.':'';
  return 'Verificação do diário concluída.\n\n'+
-   'Novas validações com plano conferido: '+relatorio.validados+'.\n'+
+   'Novas validações com estado conferido: '+relatorio.validados+'.\n'+
    'Aulas já marcadas como feitas examinadas: '+relatorio.jaValidados+'.\n'+
    'Aulas com plano específico confirmado: '+relatorio.comPlano+'.\n\n'+
    report+revision+unknown+months+'\n\nO log detalha cada aula inspecionada.';
@@ -1891,68 +1891,84 @@
         // VALIDAR UMA DATA
         // =========================================================
     
+    // Somente cell-warning (confirmado nas versões estáveis) autoriza clicar.
+    function estadoAula(data){
+      if(!data?.isConnected)return 'unknown';
+      const css=String(data.className||'')+' '+String(data.closest('th')?.className||'');
+      const done=/\bcell-(?:success|done|validated|validado|ok)\b/i.test(css);
+      const pending=data.classList.contains('cell-warning');
+      return done&&pending?'unknown':done?'done':pending?'pending':'unknown';
+    }
+
     async function validarData(data,indice,total){
- const texto=String(data.textContent||'').trim(),ref=identificarDia(texto);
- const css=String(data.className||'')+' '+String(data.closest('th')?.className||'');
- const jaFeito=/\bcell-(?:success|done|validated|validado|ok)\b/i.test(css);
- atualizarStatus('Conferindo aula '+indice+'/'+total+': '+ref);
- registrarLog('INSPECIONANDO: '+ref+(jaFeito?' [FEITA NO DIÁRIO]':''));
- let modal;
- try{
-  data.click();
-  modal=await esperar(()=>obterModalVisivel(),6500);
- }catch(error){
-  relatorio.revisao.push(ref);
-  registrarLog('REVISAR: não consegui abrir o dia '+ref+': '+String(error?.message||error));
-  return;
- }
- await wait(300);
- const declarada=detectarSemPlanoSemanal(modal);
- const plano=declarada?{status:'missing',reason:'o SEGES declarou ausência de plano para esta aula'}:
-  await auditarPlanoDaAula(data);
- if(pararSolicitado)return;
- const faltando=plano.status==='missing'||plano.status==='partial';
- if(faltando){
-  relatorio.semPlano.push(ref+' — '+plano.reason);
-  registrarLog('SEM PLANO ESPECÍFICO: '+ref+' — '+plano.reason+
-   (jaFeito?' [AULA JÁ MARCADA FEITA]':''));
-  atualizarStatus('⚠ Aula sem planejamento específico: '+texto);
- }else if(plano.status==='present'){
-  relatorio.comPlano++;
-  registrarLog('PLANO CONFERIDO: '+ref+' — '+plano.reason);
- }else{
-  relatorio.semConferencia.push(ref+' — '+plano.reason);
-  registrarLog('PLANO NÃO VERIFICÁVEL: '+ref+' — '+plano.reason);
- }
- if(jaFeito){
-  relatorio.jaValidados++;
-  registrarLog('JÁ VALIDADA NO DIÁRIO: '+ref+(faltando?' — FALTA PLANO DESTA AULA':''));
- }
- const buttons=[...modal.querySelectorAll('button')].filter(visivel);
- const yes=buttons.find(btn=>normalizarAula(btn.textContent)==='sim')||
-  buttons.find(btn=>normalizarAula(btn.textContent).includes('sim')&&btn.classList.contains('btn-success'));
- if(!jaFeito&&yes&&plano.status==='present'){
-  yes.click();
-  await esperar(()=>!obterModalVisivel());
-  await wait(400);
-  relatorio.validados++;
-  registrarLog('VALIDADO COM PLANO CONFIRMADO: '+ref);
-  return;
- }
- if(!jaFeito&&!faltando){
-  relatorio.revisao.push(ref);
-  registrarLog('SEM CONFIRMAÇÃO: '+ref+' — '+(plano.status==='unknown'?
-   'não foi possível verificar o plano exato; não cliquei Sim':
-   'o botão Sim não foi encontrado'));
- }
- const close=[...modal.querySelectorAll('.modal-footer button[data-dismiss="modal"], button[data-dismiss="modal"], button.close')]
-  .find(visivel)||buttons.find(btn=>normalizarAula(btn.textContent).includes('fechar'));
- if(!close)throw Error('Botão Fechar não identificado na aula '+texto+
-  '. Parei para evitar alterar outra aula.');
- close.click();
- await esperar(()=>!obterModalVisivel(),6000);
- await wait(150);
-}
+      const texto=String(data.textContent||'').trim(),ref=identificarDia(texto);
+      const inicial=estadoAula(data);
+      atualizarStatus('Conferindo aula '+indice+'/'+total+': '+ref);
+      registrarLog('INSPECIONANDO: '+ref+' ['+inicial+']');
+      // Auditoria independente: jamais abrir uma aula feita para consultar o plano.
+      const plano=await auditarPlanoDaAula(data);
+      if(pararSolicitado)return;
+      let faltando=plano.status==='missing'||plano.status==='partial';
+      if(faltando){
+        relatorio.semPlano.push(ref+' — '+plano.reason);
+        registrarLog('SEM PLANO ESPECÍFICO: '+ref+' — '+plano.reason);
+      }else if(plano.status==='present'){
+        relatorio.comPlano++;
+        registrarLog('PLANO CONFERIDO: '+ref+' — '+plano.reason);
+      }else{
+        relatorio.semConferencia.push(ref+' — '+plano.reason);
+        registrarLog('PLANO NÃO VERIFICÁVEL: '+ref+' — '+plano.reason);
+      }
+      const atual=estadoAula(data);
+      if(atual==='done'){
+        relatorio.jaValidados++;
+        registrarLog('JÁ VALIDADA — PRESERVADA: '+ref);
+        return;
+      }
+      if(inicial!=='pending'||atual!=='pending'){
+        relatorio.revisao.push(ref);
+        registrarLog('ESTADO NÃO CONFIRMADO — SEM CLIQUE: '+ref);
+        return;
+      }
+      if(faltando)return;
+      if(obterModalVisivel())throw Error('Modal inesperado; interrompido para proteger as aulas.');
+      if(pararSolicitado||estadoAula(data)!=='pending')return;
+      data.click();
+      const modal=await esperar(()=>obterModalVisivel(),6500);
+      await wait(300);
+      const declarada=detectarSemPlanoSemanal(modal);
+      if(declarada){
+        relatorio.semPlano.push(ref+' — SEGES declarou ausência de plano');
+        registrarLog('SEM PLANO: '+ref+' — informado pelo SEGES');
+      }
+      const buttons=[...modal.querySelectorAll('button')].filter(visivel);
+      const yes=buttons.find(btn=>normalizarAula(btn.textContent)==='sim')||
+        buttons.find(btn=>normalizarAula(btn.textContent).includes('sim')&&btn.classList.contains('btn-success'));
+      // Quando o SEGES permite confirmar, a auditoria inconclusiva não impede a validação.
+      if(!pararSolicitado&&!declarada&&yes){
+        yes.click();
+        await esperar(()=>!obterModalVisivel());
+        await esperarCarregamento();
+        await wait(700);
+        if(estadoAula(data)==='done'){
+          relatorio.validados++;
+          registrarLog('VALIDADO E CONFERIDO: '+ref);
+        }else{
+          relatorio.revisao.push(ref);
+          registrarLog('CONFIRMAÇÃO ENVIADA — estado final não comprovado: '+ref);
+        }
+        return;
+      }
+      if(!declarada){
+        relatorio.revisao.push(ref);
+        registrarLog('SEM CONFIRMAÇÃO: '+ref);
+      }
+      const close=[...modal.querySelectorAll('.modal-footer button[data-dismiss="modal"], button[data-dismiss="modal"], button.close')]
+        .find(visivel)||buttons.find(btn=>normalizarAula(btn.textContent).includes('fechar'));
+      if(!close)throw Error('Botão Fechar não identificado; interrompido.');
+      close.click();
+      await esperar(()=>!obterModalVisivel(),6000);
+    }
 
         // =========================================================
         // VALIDAR TODAS AS DATAS DA DISCIPLINA
@@ -2294,7 +2310,7 @@ function iniciarModuloPlanos() {
     const el=document.createElement('div');
     el.id='seges-v3-panel';
     el.dataset.segesVersion='3.3.0';
-    el.innerHTML=`<div class="head">SEGES • Assistente v3.5.0 — Planos</div><div class="body">
+    el.innerHTML=`<div class="head">SEGES • Assistente v3.5.1 — Planos</div><div class="body">
       <div id="seges-v3-status" style="margin-bottom:8px">Pronto. Nada será retomado depois que a guia for fechada.</div>
       <div style="height:9px;background:#e1eaf2;border-radius:8px;overflow:hidden"><div id="seges-v3-progress" style="height:100%;width:0;background:#1578b3"></div></div>
       <div id="seges-v3-percentage" style="font-size:11px;text-align:right">0%</div>
@@ -2445,7 +2461,7 @@ function iniciarModuloPlanos() {
       .map(line=>line.replace(/(https?:\/\/[^\s?#)]+)\?[^\s)]+/g,'$1?[parâmetros ocultos]'))
       .join('\n');
     return [
-      'SEGES • Assistente 3.5.0',
+      'SEGES • Assistente 3.5.1',
       'Etapa: '+String(etapa||'Não identificada'),
       'Plano: '+String(contexto||'Não identificado'),
       'Erro: '+message,
