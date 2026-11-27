@@ -469,24 +469,34 @@
       return [
         /\bsem\s+(?:um\s+|o\s+)?(?:plano|planejamento)\s+semanal\b/,
         /\bnao\s+(?:ha|existe|possui|consta|tem|foi\s+encontrad[oa]|foi\s+cadastrad[oa])\b.{0,65}\b(?:plano|planejamento)\s+semanal\b/,
-        /\b(?:plano|planejamento)\s+semanal\b.{0,80}\b(?:nao\s+(?:foi\s+)?(?:encontrad[oa]|cadastrad[oa]|localizad[oa])|inexistente|ausente)\b/
+        /\b(?:plano|planejamento)\s+semanal\b.{0,80}\b(?:nao\s+(?:foi\s+)?(?:encontrad[oa]|cadastrad[oa]|localizad[oa])|inexistente|ausente)\b/,
+        /\b(?:aula|data|dia)\b.{0,65}\bsem\s+(?:plano|planejamento)\b/,
+        /\bsem\s+(?:um\s+)?(?:plano|planejamento)\s+(?:para|nesta|nessa|desta|dessa)\s+aula\b/
       ].some(regra=>regra.test(texto));
     }
     
         function criarResumoFinal(){
-      const total=relatorio.semPlano.length;
-      const registro=total
-        ? `DIAS SEM PLANO SEMANAL IDENTIFICADO (${total}):\n${relatorio.semPlano.slice(0,12).map(x=>'- '+x).join('\n')}${total>12?`\n... e mais ${total-12}; consulte o log.`:''}`
-        : 'Nenhum dia sem plano semanal foi identificado nas datas pendentes examinadas.';
-      const revisar=relatorio.revisao.length
-        ? `\n\nAtenção: ${relatorio.revisao.length} dia(s) sem confirmação; consulte o log para revisar manualmente.`
-        : '';
-      const meses=relatorio.mesesIgnorados.length
-        ? `\nMeses não disponíveis no SEGES: ${relatorio.mesesIgnorados.length}.`
-        : '';
-      return `Validação concluída.\n\nConfirmações realizadas: ${relatorio.validados}.\n\n${registro}${revisar}${meses}\n\nO log contém os detalhes da execução.`;
-    }
-    
+ const total=relatorio.semPlano.length;
+ const report=total?
+   'AULAS COM AUSÊNCIA DE PLANEJAMENTO ESPECÍFICO ('+total+'):\n'+
+     relatorio.semPlano.slice(0,14).map(x=>'• '+x).join('\n')+
+     (total>14?'\n... e mais '+(total-14)+' no log.':''):
+   'Nenhuma aula comprovadamente vazia foi identificada.';
+ const revision=relatorio.revisao.length?
+   '\n\nAulas sem confirmação: '+relatorio.revisao.length+
+   ' (verificar manualmente no log).':'';
+ const unknown=relatorio.semConferencia.length?
+   '\nPlanejamento individual não verificável em '+relatorio.semConferencia.length+
+   ' aula(s); o programa não presumiu que estavam vazias.':'';
+ const months=relatorio.mesesIgnorados.length?
+   '\nMeses não disponíveis: '+relatorio.mesesIgnorados.length+'.':'';
+ return 'Verificação do diário concluída.\n\n'+
+   'Novas validações com plano conferido: '+relatorio.validados+'.\n'+
+   'Aulas já marcadas como feitas examinadas: '+relatorio.jaValidados+'.\n'+
+   'Aulas com plano específico confirmado: '+relatorio.comPlano+'.\n\n'+
+   report+revision+unknown+months+'\n\nO log detalha cada aula inspecionada.';
+}
+
         function instalarAcessoriosDoPainel(painel,cabecalho,botoes,status){
       // Painel arrastável pelo cabeçalho, com limite dentro da janela.
       cabecalho.style.cursor='grab';
