@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SEGES • Assistente — Faltas, Planos e Notas
 // @namespace    https://github.com/arthurhenriquetb/repo4htba
-// @version      3.4.0
+// @version      3.5.0
 // @description  Faltas, planejamento e notas Excel no SEGES, com revisão antes de lançar.
 // @author       Prof. Arthur
 // @contributor  Prof. Samuel Louzada (módulo de notas, versão 2.7)
@@ -2343,7 +2343,7 @@ function iniciarModuloPlanos() {
     const el=document.createElement('div');
     el.id='seges-v3-panel';
     el.dataset.segesVersion='3.3.0';
-    el.innerHTML=`<div class="head">SEGES • Assistente v3.4.0 — Planos</div><div class="body">
+    el.innerHTML=`<div class="head">SEGES • Assistente v3.5.0 — Planos</div><div class="body">
       <div id="seges-v3-status" style="margin-bottom:8px">Pronto. Nada será retomado depois que a guia for fechada.</div>
       <div style="height:9px;background:#e1eaf2;border-radius:8px;overflow:hidden"><div id="seges-v3-progress" style="height:100%;width:0;background:#1578b3"></div></div>
       <div id="seges-v3-percentage" style="font-size:11px;text-align:right">0%</div>
@@ -2494,7 +2494,7 @@ function iniciarModuloPlanos() {
       .map(line=>line.replace(/(https?:\/\/[^\s?#)]+)\?[^\s)]+/g,'$1?[parâmetros ocultos]'))
       .join('\n');
     return [
-      'SEGES • Assistente 3.4.0',
+      'SEGES • Assistente 3.5.0',
       'Etapa: '+String(etapa||'Não identificada'),
       'Plano: '+String(contexto||'Não identificado'),
       'Erro: '+message,
@@ -2669,7 +2669,7 @@ function iniciarModuloPlanos() {
   async function abrirTabela() {
     iniciarOperacao();
     arquivos=new Map();substituicoes=new Map();ultimoRelatorio=null;
-    quadroAtual={stages:new Map(),review:null,methodOverrides:new Map(),manualTextOverrides:new Map()};
+    quadroAtual={stages:new Map(),review:null,methodOverrides:new Map(),manualTextOverrides:new Map(),freeTextOverrides:new Map()};
     const root=modal(`<h3>Escolher turmas e semanas</h3>
       <p class="hint">Uma tabela para todas as turmas. As próximas semanas sem plano, após a última já planejada, vêm marcadas (duas por turma). Você pode ajustar a quantidade e qualquer célula.</p>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -3129,10 +3129,14 @@ function iniciarModuloPlanos() {
         const manualText=row.kind==='manual'
           ? (manualEdited?quadroAtual.manualTextOverrides.get(manualGroupKey):row.manualText)
           : '';
+        const customText=quadroAtual.freeTextOverrides?.get(key);
+        const freeText=String(row.existingText || (customText!==undefined?
+          customText:(row.kind==='manual'?manualText:'')));
         const line={
           key,cls,week,row,value,options,methodOptions,methodologies,
           label:ability?textoHabilidade(ability):'',manual:row.kind==='manual',
-          manualGroupKey,manualText,manualEdited,
+          manualGroupKey,manualText,manualEdited,freeText,
+          freeTextEdited:customText!==undefined,
           stage,ordinal,groupKey,
           history:referenceHistory,
           historyCount:referenceHistory.length,
@@ -3266,15 +3270,21 @@ function iniciarModuloPlanos() {
               ${chaveMetodologia(line.methodologies[slot])===chaveMetodologia(name)?'selected':''}>${html(name)}</option>`).join('')}
           </select></label>`).join('')}
        </div>`);
+    const freeTextEditor=`<textarea data-free-text-key="${html(line.key)}"
+      rows="3" ${row.existingText?'readonly title="Texto já registrado no SEGES; preservado"':''}
+      style="width:260px;min-width:210px;max-width:320px;resize:vertical;white-space:pre-wrap;font-size:12px"
+      placeholder="Digite aqui o texto livre desta aula...">${html(line.freeText||'')}</textarea>
+      ${row.existingText?'<div style="font-size:11px">Texto existente preservado</div>':''}`;
     return `<tr><td>${html(cls.name)}</td><td>${week.week}</td><td>${row.index+1}</td>
       <td style="text-align:left">${html(row.discipline)}${row.existingSkill?' · já preenchida':''}</td>
       <td style="text-align:left">${skillSelector}</td>
       <td style="text-align:left">${methods}</td>
+      <td style="text-align:left;white-space:normal">${freeTextEditor}</td>
       <td title="${html(history.join(' → '))}" style="font-size:11px;color:#63768a">
         ${html(history.filter(Boolean).slice(0,5).join(', ')||'Sem histórico curricular')}</td></tr>`;
   }).join('');
-  const root=modal(`<h3>Conferir habilidades, metodologias e textos padrão</h3>
-    <p class="hint">Os textos padrão também podem ser editados nesta revisão, por disciplina, para todas as turmas e semanas selecionadas. Nenhum plano foi gravado.</p>
+  const root=modal(`<h3>Conferir habilidades, metodologias e textos por aula</h3>
+    <p class="hint">Na coluna "Texto livre", escreva uma observação diferente para cada aula, como no campo de texto do SEGES. Os textos padrão também podem ser editados por disciplina. Nenhum plano foi gravado.</p>
     <p class="hint">As duas metodologias sugeridas são <b>Aula expositiva dialogada</b> e <b>Resolução de exercícios</b>. É possível trocar cada uma. Se você alterar uma metodologia, será perguntado se deseja replicá-la nas aulas equivalentes das outras turmas do mesmo ano.</p>
     <section id="seges-v3-text-editor" style="display:none;background:#f5f8fc;border:1px solid #cad9e6;border-radius:9px;padding:15px;margin:14px 0;white-space:normal">
       <h4 style="font-size:16px;margin:0 0 8px">Editar texto padrão — <span id="seges-v3-text-discipline"></span></h4>
@@ -3295,8 +3305,8 @@ function iniciarModuloPlanos() {
     </div>
     <div class="scroll"><table><thead><tr>
       <th>Turma</th><th>Semana</th><th>Aula</th><th>Disciplina</th><th>Habilidade / texto padrão</th>
-      <th>Metodologias (duas)</th><th>Últimos planos</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="7" style="padding:18px">Não há aulas para revisar nas semanas selecionadas.</td></tr>'}</tbody></table></div>
+      <th>Metodologias (duas)</th><th>Texto livre da aula</th><th>Últimos planos</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="8" style="padding:18px">Não há aulas para revisar nas semanas selecionadas.</td></tr>'}</tbody></table></div>
     <p class="hint" id="seges-v3-warning">${result.warnings.length?html(result.warnings.join(' | ')):''}</p>
     <p id="seges-v3-message" class="hint">Confira cada habilidade e as duas metodologias. O programa não escolherá Aprendizagem Baseada em Jogos automaticamente. Se alguma opção não existir no SEGES, escolha outra ou marque a aula como Não preencher.</p>
     <div class="actions">
@@ -3347,6 +3357,11 @@ function iniciarModuloPlanos() {
   $('#seges-v3-cancel',root).onclick=cancelar;
   $('#seges-v3-approve',root).disabled=result.suggested.length===0;
   $('#seges-v3-approve',root).onclick=()=>aprovarEExecutar().catch(falhar);
+  root.oninput=event=>{
+    const field=event.target.closest('[data-free-text-key]');
+    if(!field||field.readOnly)return;
+    quadroAtual.freeTextOverrides.set(field.dataset.freeTextKey,field.value);
+  };
   root.onchange=event=>{
     const methodControl=event.target.closest('[data-method-key]');
     const skillControl=event.target.closest('[data-proposal-key]');
@@ -3421,12 +3436,17 @@ function iniciarModuloPlanos() {
   async function aprovarEExecutar() {
   if(ativo)return;
   const proposal=quadroAtual?.review?.suggested||[];
-  const actions=proposal.filter(item=>item.value && item.value!=='__keep' && (!item.manual||String(item.manualText||'').trim()));
+  const actions=proposal.filter(item=>{
+    const text=String(item.freeText||'').trim();
+    if(item.manual)return item.value==='TEXT'&&!!text;
+    return (!!item.value&&item.value!=='__keep') ||
+      (!!text&&!item.row.existingText);
+  });
   const replacements=actions.filter(item=>!item.manual && item.row.existingSkill && item.value!==item.row.existingSkill);
   if(!actions.length){alert('Nenhum campo foi selecionado para preencher.');return;}
-  const unresolved=proposal.filter(item=>!item.manual&&!item.value&&!item.row.existingSkill);
+  const unresolved=proposal.filter(item=>!item.manual&&!item.value&&!item.row.existingSkill&&!String(item.freeText||'').trim());
   const changedUnknown=actions.filter(item=>!item.manual && item.options.find(o=>o.value===item.value)?.manualOnly);
-  const withoutTwo=actions.filter(item=>!item.manual&&!duasMetodologiasValidas(item.methodologies));
+  const withoutTwo=actions.filter(item=>!item.manual&&item.value&&item.value!=='__keep'&&!duasMetodologiasValidas(item.methodologies));
   if(withoutTwo.length){
     const examples=withoutTwo.slice(0,5).map(item=>
       item.cls.name+' · semana '+item.week.week+' · aula '+(item.row.index+1)).join('\n');
@@ -3436,11 +3456,13 @@ function iniciarModuloPlanos() {
     return;
   }
   const manualChanged=actions.filter(item=>item.manual&&item.manualEdited);
+  const notesChanged=actions.filter(item=>!item.row.existingText&&String(item.freeText||'').trim()).length;
   let message='Confirmar '+actions.length+' aula(s) de '+new Set(actions.map(a=>a.cls.id)).size+
     ' turma(s), distribuídas em '+new Set(actions.map(a=>a.cls.id+':'+a.week.week)).size+' semana(s)?';
   if(unresolved.length)message+='\n\n'+unresolved.length+' aula(s) ficarão sem preencher porque você não selecionou uma habilidade.';
   if(replacements.length)message+='\n\nATENÇÃO: '+replacements.length+' habilidade(s) já registradas serão substituídas.';
   if(manualChanged.length)message+='\n\n'+manualChanged.length+' aula(s) receberão os textos padrão personalizados nesta revisão.';
+  if(notesChanged)message+='\n\n'+notesChanged+' aula(s) receberão texto livre no campo do plano semanal.';
   if(changedUnknown.length)message+='\n\nATENÇÃO: '+changedUnknown.length+' habilidade(s) não têm código curricular que confirme a etapa. Você escolheu manualmente.';
   message+='\n\nEsta operação será executada nesta guia, sem salvar progresso. Fechar a guia ou clicar Parar encerra a automação.';
   if(!confirm(message))return;
@@ -3519,7 +3541,10 @@ function iniciarModuloPlanos() {
     const discipline=String(actual.querySelectorAll('td')[1]?.textContent||'').trim();
     if(normal(discipline)!==normal(original.discipline))
       throw Error('A disciplina da aula '+(original.index+1)+' mudou. Nova conferência necessária.');
-    if(!action.manual){
+    const textNow=String($('textarea',actual)?.value||'').trim();
+    if(textNow!==String(original.existingText||'').trim())
+      throw Error('O texto livre da aula '+(original.index+1)+' mudou desde a revisão. Nenhuma gravação será feita.');
+    if(!action.manual && action.value && action.value!=='__keep'){
       const real=opcoesDaAula(actual);
       if(!real.some(option=>option.value===action.value))
         throw Error('A habilidade '+action.value+' não consta mais no dropdown da aula '+(original.index+1)+'.');
@@ -3649,16 +3674,16 @@ function iniciarModuloPlanos() {
   async function aplicarAulaNoFrame(group,action,doc) {
   verificarAtivo();
   const tr=$$('#weekly_plan tr.by-curriculum-discipline',doc)[action.row.index];
-  if(action.manual){
+  const wantedText=String(action.freeText||'').trim();
+  if(wantedText&&!action.row.existingText){
     const field=$('textarea',tr);
-    if(!field)throw Error('Campo de texto ausente: aula '+(action.row.index+1));
-    if(!String(field.value||'').trim()){
-      field.value=action.manualText;
-      field.dispatchEvent(new doc.defaultView.Event('input',{bubbles:true}));
-      field.dispatchEvent(new doc.defaultView.Event('change',{bubbles:true}));
-    }
-    return;
+    if(!field)throw Error('Campo de texto livre ausente: aula '+(action.row.index+1));
+    if(String(field.value||'').trim())throw Error('O campo de texto da aula já foi alterado; não sobrescrever.');
+    field.value=wantedText;
+    field.dispatchEvent(new doc.defaultView.Event('input',{bubbles:true}));
+    field.dispatchEvent(new doc.defaultView.Event('change',{bubbles:true}));
   }
+  if(action.manual || !action.value || action.value==='__keep')return;
   const before=action.row.existingSkill||'';
   let block=$$('.structured-weekly-plan-id-select',tr)
     .map(el=>el.closest('.nested-fields')||el.parentElement)
